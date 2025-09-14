@@ -19,11 +19,13 @@ export class ProfilesService {
     try {
       const supabase = this.supabaseService.getClient();
 
-      const { data, error } = await supabase
+      const result = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single();
+
+      const { data, error } = result;
 
       if (error) {
         if (error.code === 'PGRST116') {
@@ -51,11 +53,13 @@ export class ProfilesService {
     try {
       const supabase = this.supabaseService.getClient();
 
-      const { data, error } = await supabase
+      const result = await supabase
         .from('profiles')
         .select('*')
         .eq('username', username)
         .single();
+
+      const { data, error } = result;
 
       if (error) {
         if (error.code === 'PGRST116') {
@@ -85,11 +89,13 @@ export class ProfilesService {
     try {
       const supabase = this.supabaseService.getClient();
 
-      const { data, error } = await supabase
+      const result = await supabase
         .from('profiles')
         .insert(profile)
         .select()
         .single();
+
+      const { data, error } = result;
 
       if (error) {
         this.logger.error(`Error creating profile: ${error.message}`);
@@ -123,12 +129,14 @@ export class ProfilesService {
       // Update the updated_at timestamp
       updates.updated_at = new Date().toISOString();
 
-      const { data, error } = await supabase
+      const result = await supabase
         .from('profiles')
         .update(updates)
         .eq('id', userId)
         .select()
         .single();
+
+      const { data, error } = result;
 
       if (error) {
         if (error.code === '23505') {
@@ -176,11 +184,13 @@ export class ProfilesService {
     try {
       const supabase = this.supabaseService.getClient();
 
-      const { data, error } = await supabase
+      const result = await supabase
         .from('profiles')
         .select('*')
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
+
+      const { data, error } = result;
 
       if (error) {
         this.logger.error(`Error fetching profiles: ${error.message}`);

@@ -95,16 +95,16 @@ export class SupabaseService {
       return null;
     }
 
-    const userMetadata = user.user_metadata || {};
+    const userMetadata = (user.user_metadata as Record<string, string>) || {};
 
     return {
       id: user.id,
       email: user.email || '',
       provider: 'github',
       github_username:
-        userMetadata.user_name || userMetadata.preferred_username,
-      avatar_url: userMetadata.avatar_url,
-      full_name: userMetadata.full_name || userMetadata.name,
+        userMetadata.user_name || userMetadata.preferred_username || '',
+      avatar_url: userMetadata.avatar_url || '',
+      full_name: userMetadata.full_name || userMetadata.name || '',
       created_at: user.created_at,
       last_sign_in_at: user.last_sign_in_at || user.created_at,
     };
