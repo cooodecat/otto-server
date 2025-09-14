@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [dev, main]
+    branches: [dev]
   pull_request:
-    branches: [dev, main]
+    branches: [dev]
 
 jobs:
   ci-for-otto-server:
@@ -34,3 +34,7 @@ jobs:
 
       - name: Build application
         run: pnpm build
+        env:
+          # Use secrets if available, otherwise use dummy values for CI build
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://dummy.supabase.co' }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'dummy-anon-key-for-ci-build' }}
