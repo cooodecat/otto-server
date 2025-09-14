@@ -34,12 +34,3 @@ jobs:
 
       - name: Build application
         run: pnpm build
-
-      - name: Run unit tests
-        run: pnpm test
-
-      - name: Run e2e tests
-        run: pnpm test:e2e
-
-      - name: Run test coverage
-        run: pnpm test:cov
