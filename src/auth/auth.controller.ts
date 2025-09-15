@@ -8,6 +8,9 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  BadRequestException,
+  InternalServerErrorException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { ProfilesService } from '../profiles/profiles.service';
@@ -58,16 +61,13 @@ export class AuthController {
       };
     } catch (error) {
       this.logger.error('Get profile error', error);
-      throw new HttpException(
-        {
-          success: false,
-          error: {
-            code: 'PROFILE_ERROR',
-            message: 'Failed to get user profile',
-          },
+      throw new InternalServerErrorException({
+        success: false,
+        error: {
+          code: 'PROFILE_ERROR',
+          message: 'Failed to get user profile',
         },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      });
     }
   }
 
@@ -82,16 +82,13 @@ export class AuthController {
   ): Promise<ApiResponse> {
     try {
       if (req.user.provider !== 'github') {
-        throw new HttpException(
-          {
-            success: false,
-            error: {
-              code: 'NOT_GITHUB_USER',
-              message: 'User is not authenticated via GitHub',
-            },
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'NOT_GITHUB_USER',
+            message: 'User is not authenticated via GitHub',
           },
-          HttpStatus.BAD_REQUEST,
-        );
+        });
       }
 
       // Get user token from header for additional Supabase queries if needed
@@ -126,16 +123,13 @@ export class AuthController {
         throw error;
       }
 
-      throw new HttpException(
-        {
-          success: false,
-          error: {
-            code: 'GITHUB_PROFILE_ERROR',
-            message: 'Failed to get GitHub profile',
-          },
+      throw new InternalServerErrorException({
+        success: false,
+        error: {
+          code: 'GITHUB_PROFILE_ERROR',
+          message: 'Failed to get GitHub profile',
         },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      });
     }
   }
 
@@ -147,16 +141,13 @@ export class AuthController {
       const { refresh_token } = refreshTokenDto;
 
       if (!refresh_token) {
-        throw new HttpException(
-          {
-            success: false,
-            error: {
-              code: 'MISSING_REFRESH_TOKEN',
-              message: 'Refresh token is required',
-            },
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'MISSING_REFRESH_TOKEN',
+            message: 'Refresh token is required',
           },
-          HttpStatus.BAD_REQUEST,
-        );
+        });
       }
 
       const result = await this.supabaseService.refreshToken(refresh_token);
@@ -172,16 +163,14 @@ export class AuthController {
       };
     } catch (error) {
       this.logger.error('Refresh token error', error);
-      throw new HttpException(
-        {
-          success: false,
-          error: {
-            code: 'REFRESH_TOKEN_ERROR',
-            message: 'Failed to refresh token',
-          },
+
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'REFRESH_TOKEN_ERROR',
+          message: 'Failed to refresh token',
         },
-        HttpStatus.UNAUTHORIZED,
-      );
+      });
     }
   }
 
@@ -199,16 +188,13 @@ export class AuthController {
       const token = authHeader?.replace('Bearer ', '');
 
       if (!token) {
-        throw new HttpException(
-          {
-            success: false,
-            error: {
-              code: 'MISSING_TOKEN',
-              message: 'Authorization token is required',
-            },
+        throw new UnauthorizedException({
+          success: false,
+          error: {
+            code: 'MISSING_TOKEN',
+            message: 'Authorization token is required',
           },
-          HttpStatus.UNAUTHORIZED,
-        );
+        });
       }
 
       await this.supabaseService.getSession(token);
@@ -226,16 +212,13 @@ export class AuthController {
       };
     } catch (error) {
       this.logger.error('Get session error', error);
-      throw new HttpException(
-        {
-          success: false,
-          error: {
-            code: 'SESSION_ERROR',
-            message: 'Failed to get session',
-          },
+      throw new InternalServerErrorException({
+        success: false,
+        error: {
+          code: 'SESSION_ERROR',
+          message: 'Failed to get session',
         },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      });
     }
   }
 }
