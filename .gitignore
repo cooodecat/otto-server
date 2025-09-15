@@ -2,6 +2,7 @@
 /dist
 /node_modules
 /build
+/.pnpm-store
 
 # TypeScript compiled files in src directory
 src/**/*.js

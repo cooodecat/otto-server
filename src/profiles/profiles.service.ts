@@ -1,4 +1,11 @@
-import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  HttpException,
+  HttpStatus,
+  InternalServerErrorException,
+  ConflictException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import type { Database } from '../types/database.types';
 
@@ -21,7 +28,7 @@ export class ProfilesService {
 
       const result = await supabase
         .from('profiles')
-        .select('*')
+        .select<'*', Profile>('*')
         .eq('id', userId)
         .single();
 
@@ -39,10 +46,7 @@ export class ProfilesService {
       return data;
     } catch (error) {
       this.logger.error('Failed to get profile', error);
-      throw new HttpException(
-        'Failed to fetch profile',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw new InternalServerErrorException('Failed to fetch profile');
     }
   }
 
@@ -55,7 +59,7 @@ export class ProfilesService {
 
       const result = await supabase
         .from('profiles')
-        .select('*')
+        .select<'*', Profile>('*')
         .eq('username', username)
         .single();
 
@@ -75,10 +79,7 @@ export class ProfilesService {
       return data;
     } catch (error) {
       this.logger.error('Failed to get profile by username', error);
-      throw new HttpException(
-        'Failed to fetch profile',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw new InternalServerErrorException('Failed to fetch profile');
     }
   }
 
@@ -92,7 +93,7 @@ export class ProfilesService {
       const result = await supabase
         .from('profiles')
         .insert(profile)
-        .select()
+        .select<'*', Profile>()
         .single();
 
       const { data, error } = result;
@@ -106,10 +107,7 @@ export class ProfilesService {
       return data;
     } catch (error) {
       this.logger.error('Failed to create profile', error);
-      throw new HttpException(
-        'Failed to create profile',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw new InternalServerErrorException('Failed to create profile');
     }
   }
 
@@ -133,7 +131,7 @@ export class ProfilesService {
         .from('profiles')
         .update(updates)
         .eq('id', userId)
-        .select()
+        .select<'*', Profile>()
         .single();
 
       const { data, error } = result;
@@ -141,10 +139,7 @@ export class ProfilesService {
       if (error) {
         if (error.code === '23505') {
           // Unique constraint violation (probably username)
-          throw new HttpException(
-            'Username already taken',
-            HttpStatus.CONFLICT,
-          );
+          throw new ConflictException('Username already taken');
         }
         this.logger.error(`Error updating profile: ${error.message}`);
         throw error;
@@ -157,10 +152,7 @@ export class ProfilesService {
         throw error;
       }
       this.logger.error('Failed to update profile', error);
-      throw new HttpException(
-        'Failed to update profile',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw new InternalServerErrorException('Failed to update profile');
     }
   }
 
@@ -186,7 +178,7 @@ export class ProfilesService {
 
       const result = await supabase
         .from('profiles')
-        .select('*')
+        .select<'*', Profile>('*')
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
 
@@ -200,10 +192,7 @@ export class ProfilesService {
       return data || [];
     } catch (error) {
       this.logger.error('Failed to get profiles', error);
-      throw new HttpException(
-        'Failed to fetch profiles',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw new InternalServerErrorException('Failed to fetch profiles');
     }
   }
 }
