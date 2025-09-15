@@ -80,6 +80,7 @@ export class CloudWatchLogsService {
     startTime?: Date,
     endTime?: Date,
     limit?: number,
+    nextToken?: string,
   ): Promise<LogQueryResult> {
     try {
       this.logger.log(`Fetching logs for CodeBuild ID: ${codebuildId}`);
@@ -90,6 +91,7 @@ export class CloudWatchLogsService {
         startTime,
         endTime,
         limit: limit || 1000,
+        nextToken,
       };
 
       return await this.getLogsFromCloudWatch(logInfo, options);
@@ -159,6 +161,8 @@ export class CloudWatchLogsService {
         logStreamName: logInfo.logStreamName,
         limit: options.limit,
         nextToken: options.nextToken,
+        // Chronological order when starting fresh; when paginating with token, AWS ignores this.
+        startFromHead: options.nextToken ? undefined : true,
       };
 
       if (options.startTime) {
@@ -181,14 +185,21 @@ export class CloudWatchLogsService {
           timestamp: new Date(event.timestamp || 0),
           message: event.message || '',
           logStream: logInfo.logStreamName,
+          // GetLogEvents does not return eventId; synthesize a stable-ish ID
           eventId: `${logInfo.logStreamName}-${event.timestamp || 0}-${index}`,
         }),
       );
 
+      const prevToken = options.nextToken;
+      const nextToken = response.nextForwardToken;
+      const pageLimit = options.limit || 1000;
+
       return {
         logs,
-        nextToken: response.nextForwardToken,
-        hasMore: !!response.nextForwardToken,
+        nextToken,
+        // Heuristic: more pages likely if we hit the page limit and token advanced.
+        hasMore:
+          !!nextToken && nextToken !== prevToken && (response.events?.length || 0) >= pageLimit,
       };
     } catch (error) {
       this.logger.error(`Failed to fetch logs from CloudWatch:`, error);
@@ -207,6 +218,7 @@ export class CloudWatchLogsService {
       options.startTime,
       options.endTime,
       options.limit,
+      options.nextToken,
     );
   }
 }

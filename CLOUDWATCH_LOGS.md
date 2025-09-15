@@ -75,10 +75,11 @@ CodeBuild ID로 모든 로그를 조회합니다.
 **Example Request:**
 
 ```bash
-curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/raw?codebuildId=log-test:5722310e-ac45-49f9-8073-42158568e720"
+curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/raw?codebuildId=otto-codebuild-project:fa21d195-132c-4721-bd14-f618c0044a83"
 ```
 
 > **참고**: 현재 테스트를 위해 인증이 비활성화되어 있습니다. 프로덕션에서는 다음과 같이 JWT 토큰을 포함해야 합니다:
+>
 > ```bash
 > curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/raw?codebuildId=..." \
 >   -H "Authorization: Bearer YOUR_JWT_TOKEN"
@@ -357,18 +358,20 @@ curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/test"
    Error: The security token included in the request is invalid
    ```
    → 새로운 STS 세션 발급 필요
-   
 2. **Session Token 누락**
+
    ```
    Error: The security token included in the request is invalid
    ```
+
    → `AWS_SESSION_TOKEN` 환경 변수 설정 확인
 
 3. **자격 증명 자동 갱신 방법**
+
    ```bash
    # AWS SSO 사용 (권장)
    aws sso login
-   
+
    # AssumeRole 사용
    aws sts assume-role --role-arn "arn:aws:iam::account:role/YourRole" \
      --role-session-name "dev-session" --duration-seconds 3600
@@ -418,7 +421,51 @@ src/cloudwatch-logs/
 │   └── get-logs.dto.ts                 # API 요청 데이터 검증
 └── types/
     └── cloudwatch.types.ts             # TypeScript 타입 정의
+
+scripts/
+└── check-codebuild.mjs                 # CodeBuild ID 검증 스크립트
 ```
+
+## 개발 도구
+
+### CodeBuild ID 검증 스크립트
+
+CodeBuild ID의 유효성과 로그 설정을 확인하는 스크립트가 제공됩니다:
+
+```bash
+# 사용법
+node scripts/check-codebuild.mjs <codebuild-id>
+
+# 예시
+node scripts/check-codebuild.mjs otto-codebuild-project:fa21d195-132c-4721-bd14-f618c0044a83
+```
+
+**출력 예시**:
+```json
+{
+  "buildId": "otto-codebuild-project:fa21d195-132c-4721-bd14-f618c0044a83",
+  "projectName": "otto-codebuild-project",
+  "buildStatus": "SUCCEEDED",
+  "arn": "arn:aws:codebuild:ap-northeast-2:130119007658:build/otto-codebuild-project:fa21d195-132c-4721-bd14-f618c0044a83",
+  "startTime": "2025-01-15T10:00:00.000Z",
+  "endTime": "2025-01-15T10:05:30.000Z",
+  "logs": {
+    "groupName": "/aws/codebuild/otto-codebuild-project",
+    "streamName": "fa21d195-132c-4721-bd14-f618c0044a83",
+    "deepLink": "https://console.aws.amazon.com/cloudwatch/home?region=ap-northeast-2#logEventViewer:group=/aws/codebuild/otto-codebuild-project;stream=fa21d195-132c-4721-bd14-f618c0044a83"
+  },
+  "sourceVersion": "main",
+  "environment": "LINUX_CONTAINER",
+  "serviceRole": "arn:aws:iam::130119007658:role/service-role/codebuild-otto-codebuild-project-service-role",
+  "region": "ap-northeast-2"
+}
+```
+
+**스크립트 기능**:
+- CodeBuild ID 유효성 검증
+- 로그 그룹/스트림 정보 확인
+- CloudWatch 직접 링크 제공
+- 빌드 상태 및 메타데이터 조회
 
 ## 추가 개발 시 고려사항
 
@@ -436,11 +483,16 @@ src/cloudwatch-logs/
 ## 업데이트 내역
 
 ### v1.1 (2025-09-15)
+
 - STS 임시 자격 증명 지원 추가 (`AWS_SESSION_TOKEN` 환경 변수)
 - `/test` 엔드포인트 추가 - API 구조 검증용
-- AWS 자격 증명 관련 문제 해결 가이드 추가  
-- 실제 CodeBuild ID 예시 업데이트 (`log-test:5722310e-ac45-49f9-8073-42158568e720`)
+- AWS 자격 증명 관련 문제 해결 가이드 추가
+- 실제 CodeBuild ID 예시 업데이트 (`otto-codebuild-project:fa21d195-132c-4721-bd14-f618c0044a83`)
 - 테스트를 위한 인증 비활성화 상태 문서화
+- **페이지네이션 로직 개선**: `nextToken` 처리 및 `startFromHead` 속성 추가
+- **CodeBuild 검증 스크립트 추가**: `scripts/check-codebuild.mjs` 개발 도구
+- **hasMore 판단 로직 개선**: 더 정확한 다음 페이지 존재 여부 판단
 
 ### v1.0 (2025-09-15)
+
 - 초기 CloudWatch Logs API 모듈 구현 완료
