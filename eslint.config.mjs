@@ -11,7 +11,8 @@ export default tseslint.config(
       'scripts/**/*',
       'src/types/database.generated.ts',
       'dist/**/*',
-      '**/*.js'
+      '**/*.js',
+      'src/supabase/functions/**/*'  // Supabase Functions 제외
     ],
   },
   eslint.configs.recommended,

@@ -1,0 +1,18 @@
+{
+    "compilerOptions": {
+        "lib": [
+            "deno.window",
+            "deno.unstable"
+        ],
+        "strict": true,
+        "allowJs": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true
+    },
+    "imports": {
+        "std/": "https://deno.land/std@0.168.0/",
+        "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2",
+        "@octokit/rest": "https://esm.sh/@octokit/rest@19.0.0",
+        "@octokit/auth-app": "https://esm.sh/@octokit/auth-app@4.0.0"
+    }
+}
