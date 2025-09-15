@@ -6,7 +6,11 @@ import {
   BatchGetBuildsCommand,
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
+import { ProjectsService } from '../projects/projects.service';
 
+/**
+ * buildspec.yml 입력 인터페이스
+ */
 export interface BuildSpecInput {
   version?: string;
   runtime?: string;
@@ -43,6 +47,9 @@ export interface BuildSpecInput {
   secrets?: Record<string, string>;
 }
 
+/**
+ * AWS CodeBuild buildspec.yml 형식 인터페이스
+ */
 export interface BuildSpecYaml {
   version: string;
   phases: {
@@ -88,25 +95,56 @@ export interface BuildSpecYaml {
   >;
 }
 
+/**
+ * 멀티테넌트 AWS CodeBuild 서비스
+ *
+ * 사용자별로 독립된 CodeBuild 프로젝트에서 빌드를 실행합니다.
+ * JSON 형태의 빌드 설정을 AWS CodeBuild buildspec.yml로 변환하여 실행합니다.
+ *
+ * @example
+ * ```typescript
+ * // 특정 프로젝트에서 빌드 실행
+ * const result = await codeBuildService.startBuildFromJson(
+ *   'user-123',
+ *   'proj_123',
+ *   buildConfig
+ * );
+ * ```
+ */
 @Injectable()
 export class CodeBuildService {
   private readonly logger = new Logger(CodeBuildService.name);
   private readonly codeBuildClient: CodeBuildClient;
-  private readonly projectName: string;
 
-  constructor(private readonly configService: ConfigService) {
+  /**
+   * CodeBuildService 생성자
+   *
+   * AWS CodeBuild 클라이언트를 초기화합니다.
+   * 더 이상 고정된 프로젝트명을 사용하지 않고, 런타임에 동적으로 결정합니다.
+   *
+   * @param configService - 환경 설정 서비스
+   * @param projectsService - 프로젝트 관리 서비스
+   * @throws {Error} AWS 자격 증명이 누락된 경우
+   */
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly projectsService: ProjectsService,
+  ) {
+    // AWS 설정 로드
     const region = this.configService.get<string>('AWS_REGION') || 'us-east-1';
     const accessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID');
     const secretAccessKey = this.configService.get<string>(
       'AWS_SECRET_ACCESS_KEY',
     );
 
+    // AWS 자격 증명 검증
     if (!accessKeyId || !secretAccessKey) {
       throw new Error(
         'AWS credentials are required: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY',
       );
     }
 
+    // CodeBuild 클라이언트 초기화
     this.codeBuildClient = new CodeBuildClient({
       region,
       credentials: {
@@ -114,25 +152,31 @@ export class CodeBuildService {
         secretAccessKey,
       },
     });
-
-    const projectName = this.configService.get<string>(
-      'CODEBUILD_PROJECT_NAME',
-    );
-    if (!projectName) {
-      throw new Error(
-        'CODEBUILD_PROJECT_NAME environment variable is required',
-      );
-    }
-    this.projectName = projectName;
   }
 
+  /**
+   * JSON 형태의 빌드 설정을 AWS CodeBuild buildspec.yml로 변환합니다
+   *
+   * @param input - JSON 형태의 빌드 설정
+   * @returns YAML 형식의 buildspec 문자열
+   *
+   * @example
+   * ```typescript
+   * const buildSpec = convertJsonToBuildSpec({
+   *   runtime: 'node:18',
+   *   commands: {
+   *     build: ['npm run build']
+   *   }
+   * });
+   * ```
+   */
   convertJsonToBuildSpec(input: BuildSpecInput): string {
     const buildSpec: BuildSpecYaml = {
       version: input.version || '0.2',
       phases: {},
     };
 
-    // Handle runtime
+    // 런타임 설정 처리
     if (input.runtime) {
       const runtimeParts = input.runtime.includes(':')
         ? input.runtime.split(':')
@@ -146,7 +190,7 @@ export class CodeBuildService {
       };
     }
 
-    // Handle commands
+    // 빌드 단계별 명령어 처리
     Object.entries(input.commands).forEach(([phase, commands]) => {
       if (commands && commands.length > 0) {
         if (phase === 'install' && buildSpec.phases.install) {
@@ -161,21 +205,21 @@ export class CodeBuildService {
           };
         }
 
-        // Add on-failure handling to non-finally phases
+        // finally 단계를 제외한 단계에 실패 처리 추가
         if (input.on_failure && phase !== 'finally') {
           (buildSpec.phases[phase] as any)['on-failure'] = input.on_failure;
         }
       }
     });
 
-    // Handle artifacts
+    // 아티팩트 설정 처리
     if (input.artifacts && input.artifacts.length > 0) {
       buildSpec.artifacts = {
         files: input.artifacts,
       };
     }
 
-    // Handle environment variables and secrets
+    // 환경변수 및 시크릿 처리
     if (
       (input.environment_variables &&
         Object.keys(input.environment_variables).length > 0) ||
@@ -195,14 +239,14 @@ export class CodeBuildService {
       }
     }
 
-    // Handle cache
+    // 캐시 설정 처리
     if (input.cache && input.cache.paths && input.cache.paths.length > 0) {
       buildSpec.cache = {
         paths: input.cache.paths,
       };
     }
 
-    // Handle reports
+    // 리포트 설정 처리
     if (input.reports && Object.keys(input.reports).length > 0) {
       buildSpec.reports = {};
       Object.entries(input.reports).forEach(([reportName, reportConfig]) => {
@@ -228,13 +272,28 @@ export class CodeBuildService {
     });
   }
 
+  /**
+   * 지정된 CodeBuild 프로젝트에서 빌드를 시작합니다
+   *
+   * @param userId - 사용자 ID
+   * @param projectId - 프로젝트 ID
+   * @param buildSpecOverride - buildspec.yml 내용
+   * @param environmentVariables - 추가 환경변수
+   * @returns 빌드 시작 결과
+   * @throws {Error} 프로젝트를 찾을 수 없거나 빌드 시작에 실패한 경우
+   */
   async startBuild(
+    userId: string,
+    projectId: string,
     buildSpecOverride: string,
     environmentVariables?: Record<string, string>,
   ) {
     try {
+      // 사용자의 프로젝트 정보 조회
+      const project = await this.projectsService.getProject(userId, projectId);
+
       const command = new StartBuildCommand({
-        projectName: this.projectName,
+        projectName: project.codebuildProjectName,
         buildspecOverride: buildSpecOverride,
         environmentVariablesOverride: environmentVariables
           ? Object.entries(environmentVariables).map(([name, value]) => ({
@@ -247,7 +306,9 @@ export class CodeBuildService {
 
       const response = await this.codeBuildClient.send(command);
 
-      this.logger.log(`Build started: ${response.build?.id}`);
+      this.logger.log(
+        `Build started: ${response.build?.id} for project ${project.codebuildProjectName} (user: ${userId})`
+      );
 
       return {
         buildId: response.build?.id || '',
@@ -256,11 +317,18 @@ export class CodeBuildService {
         startTime: response.build?.startTime,
       };
     } catch (error) {
-      this.logger.error('Failed to start build:', error);
+      this.logger.error(`Failed to start build for project ${projectId}:`, error);
       throw error;
     }
   }
 
+  /**
+   * 빌드 상태를 조회합니다
+   *
+   * @param buildId - 빌드 ID
+   * @returns 빌드 상태 정보
+   * @throws {Error} 빌드를 찾을 수 없는 경우
+   */
   async getBuildStatus(buildId: string) {
     try {
       const command = new BatchGetBuildsCommand({
@@ -290,14 +358,40 @@ export class CodeBuildService {
     }
   }
 
+  /**
+   * JSON 형태의 빌드 설정으로 빌드를 시작합니다
+   *
+   * JSON 설정을 buildspec.yml로 변환한 후 빌드를 시작합니다.
+   *
+   * @param userId - 사용자 ID
+   * @param projectId - 프로젝트 ID
+   * @param input - JSON 형태의 빌드 설정
+   * @param environmentVariables - 추가 환경변수
+   * @returns 빌드 시작 결과
+   *
+   * @example
+   * ```typescript
+   * const result = await startBuildFromJson('user-123', 'proj-456', {
+   *   runtime: 'node:18',
+   *   commands: {
+   *     install: ['npm ci'],
+   *     build: ['npm run build']
+   *   }
+   * });
+   * ```
+   */
   async startBuildFromJson(
+    userId: string,
+    projectId: string,
     input: BuildSpecInput,
     environmentVariables?: Record<string, string>,
   ) {
+    // JSON을 buildspec.yml로 변환
     const buildSpecYaml = this.convertJsonToBuildSpec(input);
 
-    this.logger.log('Generated buildspec.yml:', buildSpecYaml);
+    this.logger.log(`Generated buildspec.yml for project ${projectId}:`, buildSpecYaml);
 
-    return this.startBuild(buildSpecYaml, environmentVariables);
+    // 동적으로 선택된 프로젝트에서 빌드 시작
+    return this.startBuild(userId, projectId, buildSpecYaml, environmentVariables);
   }
 }
