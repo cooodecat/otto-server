@@ -43,22 +43,30 @@ export class CloudWatchLogsService {
       region: this.configService.get<string>('AWS_REGION') || 'us-east-1',
       accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID'),
       secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY'),
+      sessionToken: this.configService.get<string>('AWS_SESSION_TOKEN'),
     };
+
+    this.logger.log(`AWS Config - Region: ${config.region}`);
+    this.logger.log(`AWS Config - AccessKeyId: ${config.accessKeyId?.substring(0, 10)}...`);
+    this.logger.log(`AWS Config - SecretAccessKey: ${config.secretAccessKey ? '***provided***' : 'undefined'}`);
+    this.logger.log(`AWS Config - SessionToken: ${config.sessionToken ? '***provided***' : 'undefined'}`);
+
+    const credentials = config.accessKeyId && config.secretAccessKey 
+      ? { 
+          accessKeyId: config.accessKeyId, 
+          secretAccessKey: config.secretAccessKey,
+          sessionToken: config.sessionToken
+        }
+      : undefined;
 
     this.cloudWatchLogsClient = new CloudWatchLogsClient({
       region: config.region,
-      credentials: {
-        accessKeyId: config.accessKeyId,
-        secretAccessKey: config.secretAccessKey,
-      },
+      credentials,
     });
 
     this.codeBuildClient = new CodeBuildClient({
       region: config.region,
-      credentials: {
-        accessKeyId: config.accessKeyId,
-        secretAccessKey: config.secretAccessKey,
-      },
+      credentials,
     });
   }
 
@@ -169,11 +177,11 @@ export class CloudWatchLogsService {
         );
 
       const logs: RawLogEntry[] = (response.events || []).map(
-        (event: CloudWatchLogEvent) => ({
-          timestamp: new Date(event.timestamp),
-          message: event.message,
+        (event, index) => ({
+          timestamp: new Date(event.timestamp || 0),
+          message: event.message || '',
           logStream: logInfo.logStreamName,
-          eventId: event.eventId,
+          eventId: `${logInfo.logStreamName}-${event.timestamp || 0}-${index}`,
         }),
       );
 

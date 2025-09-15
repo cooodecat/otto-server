@@ -10,7 +10,7 @@ import { Transform } from 'class-transformer';
 
 export class GetLogsDto {
   @IsString()
-  codebuildId: string;
+  codebuildId!: string;
 
   @IsOptional()
   @IsDateString()

@@ -22,7 +22,7 @@ export class CloudWatchLogsRetryService {
       exponentialBackoff = true,
     } = options;
 
-    let lastError: Error;
+    let lastError: Error = new Error('Unknown error');
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {

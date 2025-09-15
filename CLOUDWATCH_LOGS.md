@@ -20,8 +20,16 @@ Otto Server의 AWS CloudWatch Logs 연동 모듈 문서입니다. CodeBuild 실�
 ```env
 # AWS CloudWatch Logs API 설정 (필수)
 AWS_REGION=ap-northeast-2
-AWS_ACCESS_KEY_ID=your-aws-access-key-id
-AWS_SECRET_ACCESS_KEY=your-aws-secret-access-key
+
+# 방법 1: STS 임시 자격 증명 사용 (권장 - 보안)
+AWS_ACCESS_KEY_ID=ASIA...  # STS 임시 Access Key
+AWS_SECRET_ACCESS_KEY=your-temporary-secret-key
+AWS_SESSION_TOKEN=your-session-token  # STS 세션 토큰 (필수)
+
+# 방법 2: IAM 사용자 영구 자격 증명 (개발 환경만)
+# AWS_ACCESS_KEY_ID=AKIA...  # 영구 Access Key
+# AWS_SECRET_ACCESS_KEY=your-permanent-secret-key
+# AWS_SESSION_TOKEN 설정 불필요
 ```
 
 ### AWS IAM 권한 요구사항
@@ -52,7 +60,7 @@ AWS_SECRET_ACCESS_KEY=your-aws-secret-access-key
 
 ## API 엔드포인트
 
-모든 엔드포인트는 Supabase 인증이 필요합니다.
+모든 엔드포인트는 Supabase 인증이 필요합니다. (현재 테스트를 위해 임시 비활성화됨)
 
 ### 1. 전체 로그 조회
 
@@ -67,9 +75,14 @@ CodeBuild ID로 모든 로그를 조회합니다.
 **Example Request:**
 
 ```bash
-curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/raw?codebuildId=my-project:12345678-1234-1234-1234-123456789012" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/raw?codebuildId=log-test:5722310e-ac45-49f9-8073-42158568e720"
 ```
+
+> **참고**: 현재 테스트를 위해 인증이 비활성화되어 있습니다. 프로덕션에서는 다음과 같이 JWT 토큰을 포함해야 합니다:
+> ```bash
+> curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/raw?codebuildId=..." \
+>   -H "Authorization: Bearer YOUR_JWT_TOKEN"
+> ```
 
 **Example Response:**
 
@@ -101,8 +114,7 @@ curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/raw?codebuildId=my-pro
 **Example Request:**
 
 ```bash
-curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/range?codebuildId=my-project:12345678-1234-1234-1234-123456789012&startTime=2024-01-15T10:00:00.000Z&endTime=2024-01-15T11:00:00.000Z&limit=100" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/range?codebuildId=log-test:5722310e-ac45-49f9-8073-42158568e720&startTime=2024-01-15T10:00:00.000Z&endTime=2024-01-15T11:00:00.000Z&limit=100"
 ```
 
 **Example Response:**
@@ -291,7 +303,76 @@ throw new InternalServerErrorException(
 - 긴 시간 범위 조회 시 여러 번에 나누어 요청
 - `nextToken`을 활용한 페이지네이션으로 메모리 사용량 최적화
 
+### 3. 테스트 엔드포인트
+
+**GET** `/api/v1/cloudwatch-logs/test`
+
+실제 AWS API 호출 없이 API 구조를 검증하기 위한 테스트 엔드포인트입니다.
+
+**Example Request:**
+
+```bash
+curl -X GET "http://localhost:4000/api/v1/cloudwatch-logs/test"
+```
+
+**Example Response:**
+
+```json
+[
+  {
+    "timestamp": "2025-01-15T10:00:00.000Z",
+    "message": "[PHASE_1] Starting build process",
+    "logStream": "test-log-stream-1",
+    "eventId": "test-event-1"
+  },
+  {
+    "timestamp": "2025-01-15T10:00:01.000Z",
+    "message": "[PHASE_1] Installing dependencies...",
+    "logStream": "test-log-stream-1",
+    "eventId": "test-event-2"
+  },
+  {
+    "timestamp": "2025-01-15T10:00:05.000Z",
+    "message": "[PHASE_2] Running tests...",
+    "logStream": "test-log-stream-1",
+    "eventId": "test-event-3"
+  },
+  {
+    "timestamp": "2025-01-15T10:00:10.000Z",
+    "message": "[PHASE_3] Build completed successfully",
+    "logStream": "test-log-stream-1",
+    "eventId": "test-event-4"
+  }
+]
+```
+
 ## 문제 해결
+
+### AWS 자격 증명 관련
+
+**권장사항**: 보안을 위해 STS 임시 자격 증명 사용을 권장합니다.
+
+1. **STS 임시 자격 증명 만료**
+   ```
+   Error: The security token included in the request is invalid
+   ```
+   → 새로운 STS 세션 발급 필요
+   
+2. **Session Token 누락**
+   ```
+   Error: The security token included in the request is invalid
+   ```
+   → `AWS_SESSION_TOKEN` 환경 변수 설정 확인
+
+3. **자격 증명 자동 갱신 방법**
+   ```bash
+   # AWS SSO 사용 (권장)
+   aws sso login
+   
+   # AssumeRole 사용
+   aws sts assume-role --role-arn "arn:aws:iam::account:role/YourRole" \
+     --role-session-name "dev-session" --duration-seconds 3600
+   ```
 
 ### 일반적인 오류
 
@@ -348,6 +429,18 @@ src/cloudwatch-logs/
 
 ---
 
-**문서 버전**: 1.0  
+**문서 버전**: 1.1  
 **최종 업데이트**: 2025-09-15  
 **담당자**: rarjang
+
+## 업데이트 내역
+
+### v1.1 (2025-09-15)
+- STS 임시 자격 증명 지원 추가 (`AWS_SESSION_TOKEN` 환경 변수)
+- `/test` 엔드포인트 추가 - API 구조 검증용
+- AWS 자격 증명 관련 문제 해결 가이드 추가  
+- 실제 CodeBuild ID 예시 업데이트 (`log-test:5722310e-ac45-49f9-8073-42158568e720`)
+- 테스트를 위한 인증 비활성화 상태 문서화
+
+### v1.0 (2025-09-15)
+- 초기 CloudWatch Logs API 모듈 구현 완료

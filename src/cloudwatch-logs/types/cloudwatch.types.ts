@@ -6,10 +6,10 @@ export interface RawLogEntry {
 }
 
 export interface CloudWatchLogEvent {
-  timestamp: number;
-  message: string;
-  ingestionTime: number;
-  eventId: string;
+  timestamp?: number;
+  message?: string;
+  ingestionTime?: number;
+  eventId?: string;
 }
 
 export interface CodeBuildLogInfo {
@@ -34,6 +34,7 @@ export interface LogQueryResult {
 
 export interface CloudWatchConfig {
   region: string;
-  accessKeyId: string;
-  secretAccessKey: string;
+  accessKeyId: string | undefined;
+  secretAccessKey: string | undefined;
+  sessionToken?: string | undefined;
 }
