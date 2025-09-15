@@ -13,6 +13,7 @@ describe('CodeBuildService', () => {
         AWS_SECRET_ACCESS_KEY: 'mock-secret-key',
         CODEBUILD_PROJECT_NAME: 'test-project',
       };
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
       return config[key];
     }),
   };
