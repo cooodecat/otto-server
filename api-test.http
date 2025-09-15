@@ -1,0 +1,80 @@
+### 1. 서버 상태 확인
+GET http://localhost:4000/api/v1/
+
+### 2. JSON을 buildspec.yaml로 변환 (인증 필요)
+POST http://localhost:4000/api/v1/codebuild/convert
+Content-Type: application/json
+Authorization: Bearer mock-jwt-token
+{
+  "version": "0.2",
+  "runtime": "nodejs:18",
+  "commands": {
+    "install": ["npm install"],
+    "build": ["npm run build"],
+    "test": ["npm test"]
+  },
+  "artifacts": ["dist/**/*"],
+  "environment_variables": {
+    "NODE_ENV": "production"
+  }
+}
+
+### 3. 실제 빌드 시작 (인증 필요)
+POST http://localhost:4000/api/v1/codebuild/start
+Content-Type: application/json
+Authorization: Bearer mock-jwt-token
+
+{
+  "version": "0.2",
+  "runtime": "nodejs:18",
+  "commands": {
+    "install": ["npm install"],
+    "build": ["npm run build"],
+    "test": ["npm test"]
+  },
+  "artifacts": ["dist/**/*"],
+  "environment_variables": {
+    "NODE_ENV": "production"
+  }
+}
+
+### 4. 고급 기능 테스트 (인증 필요)
+POST http://localhost:4000/api/v1/codebuild/convert
+Content-Type: application/json
+Authorization: Bearer mock-jwt-token
+
+{
+  "version": "0.2",
+  "runtime": "python:3.9",
+  "commands": {
+    "install": ["pip install -r requirements.txt"],
+    "pre_build": ["echo 'Running pre-build'"],
+    "build": ["python -m pytest --junitxml=test-results.xml"],
+    "post_build": ["echo 'Build completed'"],
+    "finally": ["echo 'Cleanup', "rm -rf __pycache__"]
+  },
+  "artifacts": ["dist/**/*", "*.log"],
+  "environment_variables": {
+    "PYTHONPATH": "/app",
+    "ENV": "production"
+  },
+  "secrets": {
+    "API_KEY": "/myapp/api-key",
+    "DB_PASSWORD": "/myapp/db-password"
+  },
+  "cache": {
+    "paths": [".pip-cache/**/*", "__pycache__/**/*"]
+  },
+  "reports": {
+    "pytest-reports": {
+      "files": ["test-results.xml"],
+      "file-format": "JUNITXML",
+      "base-directory": "test-results"
+    }
+  },
+  "on_failure": "CONTINUE"
+}
+
+### 5. 빌드 상태 조회 (인증 필요)
+GET http://localhost:4000/api/v1/codebuild/status/BUILD_ID_HERE
+Authorization: Bearer mock-jwt-token
