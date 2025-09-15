@@ -5,7 +5,7 @@ import { RawLogEntry, LogQueryResult } from './types/cloudwatch.types';
 import { SupabaseAuthGuard } from '../supabase/guards/supabase-auth.guard';
 
 @Controller('cloudwatch-logs')
-// @UseGuards(SupabaseAuthGuard) // 임시로 비활성화 - 테스트용
+@UseGuards(SupabaseAuthGuard) // 프로덕션용 - 테스트 시 주석 처리하여 사용
 export class CloudWatchLogsController {
   private readonly logger = new Logger(CloudWatchLogsController.name);
 
@@ -19,7 +19,7 @@ export class CloudWatchLogsController {
   }
 
   @Get('test')
-  async getTestData(): Promise<RawLogEntry[]> {
+  getTestData(): RawLogEntry[] {
     this.logger.log('Returning test data - API structure validation');
 
     return [

@@ -19,7 +19,6 @@ import {
 } from '@aws-sdk/client-codebuild';
 import {
   RawLogEntry,
-  CloudWatchLogEvent,
   CodeBuildLogInfo,
   LogQueryOptions,
   LogQueryResult,
