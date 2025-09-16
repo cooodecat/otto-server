@@ -7,65 +7,11 @@ import {
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
-
-/**
- * buildspec.yml 입력 인터페이스
- * JSON 형태의 빌드 설정을 정의하는 인터페이스
- */
-export interface BuildSpecInput {
-  /** buildspec 버전 (기본값: '0.2') */
-  version?: string;
-  /** 런타임 환경 (예: 'node:18', 'python:3.9') */
-  runtime?: string;
-  /** 빌드 단계별 명령어 */
-  commands: {
-    /** 설치 단계 명령어 */
-    install?: string[];
-    /** 빌드 전 단계 명령어 */
-    pre_build?: string[];
-    /** 빌드 단계 명령어 */
-    build?: string[];
-    /** 빌드 후 단계 명령어 */
-    post_build?: string[];
-    /** 최종 단계 명령어 */
-    finally?: string[];
-  };
-  /** 빌드 아티팩트 파일 목록 */
-  artifacts?: string[];
-  /** 환경 변수 */
-  environment_variables?: Record<string, string>;
-  /** 캐시 설정 */
-  cache?: {
-    /** 캐시할 경로 목록 */
-    paths?: string[];
-  };
-  /** 테스트 리포트 설정 */
-  reports?: Record<
-    string,
-    {
-      /** 리포트 파일 목록 */
-      files: string[];
-      /** 파일 형식 */
-      'file-format'?:
-        | 'JUNITXML'
-        | 'CUCUMBERJSON'
-        | 'TESTNGXML'
-        | 'CLOVERXML'
-        | 'VISUALSTUDIOTRX'
-        | 'JACOCOXML'
-        | 'NUNITXML'
-        | 'NUNIT3XML';
-      /** 기본 디렉토리 */
-      'base-directory'?: string;
-      /** 경로 제거 여부 */
-      'discard-paths'?: boolean;
-    }
-  >;
-  /** 실패 시 동작 */
-  on_failure?: 'ABORT' | 'CONTINUE';
-  /** AWS Secrets Manager 시크릿 */
-  secrets?: Record<string, string>;
-}
+import {
+  FlowPipelineInput,
+  BlockTypeEnum,
+  BlockGroupType,
+} from './types/flow-block.types';
 
 /**
  * AWS CodeBuild buildspec.yml 형식 인터페이스
@@ -205,22 +151,30 @@ export class CodeBuildService {
   }
 
   /**
-   * JSON 형태의 빌드 설정을 AWS CodeBuild buildspec.yml로 변환합니다
+   * FlowBlock 기반 파이프라인을 AWS CodeBuild buildspec.yml로 변환합니다
    *
-   * @param input - JSON 형태의 빌드 설정
+   * @param input - FlowBlock 기반 파이프라인 설정
    * @returns YAML 형식의 buildspec 문자열
    *
    * @example
    * ```typescript
-   * const buildSpec = convertJsonToBuildSpec({
-   *   runtime: 'node:18',
-   *   commands: {
-   *     build: ['npm run build']
-   *   }
+   * const buildSpec = convertFlowPipelineToBuildSpec({
+   *   version: "0.2",
+   *   runtime: "node:18",
+   *   blocks: [
+   *     {
+   *       id: "install-deps",
+   *       block_type: "node_package_manager",
+   *       group_type: "build",
+   *       on_success: "build-app",
+   *       package_manager: "npm",
+   *       package_list: []
+   *     }
+   *   ]
    * });
    * ```
    */
-  convertJsonToBuildSpec(input: BuildSpecInput): string {
+  convertFlowPipelineToBuildSpec(input: FlowPipelineInput): string {
     const buildSpec: BuildSpecYaml = {
       version: input.version || '0.2',
       phases: {},
@@ -240,28 +194,237 @@ export class CodeBuildService {
       };
     }
 
-    // 빌드 단계별 명령어 처리
-    Object.entries(input.commands).forEach(([phase, commands]) => {
-      if (commands && commands.length > 0) {
-        if (phase === 'install' && buildSpec.phases.install) {
-          buildSpec.phases.install.commands = commands;
-        } else if (phase === 'finally') {
-          buildSpec.phases.finally = {
-            commands,
-          };
-        } else {
-          buildSpec.phases[phase] = {
-            commands,
-          };
-        }
+    // 블록들을 그룹별로 분류 (순서 유지)
+    const buildBlocks = input.blocks.filter(
+      (block) => block.group_type === BlockGroupType.BUILD || block.group_type === 'build',
+    );
+    const testBlocks = input.blocks.filter(
+      (block) => block.group_type === BlockGroupType.TEST || block.group_type === 'test',
+    );
+    const runBlocks = input.blocks.filter(
+      (block) => block.group_type === BlockGroupType.RUN || block.group_type === 'run',
+    );
+    const customBlocks = input.blocks.filter(
+      (block) => block.group_type === BlockGroupType.CUSTOM || block.group_type === 'custom',
+    );
 
-        // finally 단계를 제외한 단계에 실패 처리 추가
-        if (input.on_failure && phase !== 'finally') {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          (buildSpec.phases[phase] as any)['on-failure'] = input.on_failure;
+    // BUILD 그룹 처리 (조건부 실행 지원)
+    if (buildBlocks.length > 0) {
+      const buildCommands: string[] = [];
+
+      buildBlocks.forEach((block) => {
+        // 블록별 명령어 생성
+        const blockCommands = this.getBlockCommandsById(input.blocks, block.id);
+
+        // 패키지 매니저 블록은 실패시 중단 (fallback 불가)
+        const isPackageManagerBlock =
+          block.block_type === BlockTypeEnum.OS_PACKAGE_MANAGER ||
+          block.block_type === BlockTypeEnum.NODE_PACKAGE_MANAGER;
+        if (block.on_failed && !isPackageManagerBlock) {
+          // 실패시 다른 블록 실행하는 조건부 로직 (패키지 매니저 제외)
+          const failureCommands = this.getBlockCommandsById(
+            input.blocks,
+            block.on_failed,
+          );
+
+          buildCommands.push(`# Block: ${block.id} (with fallback)`);
+          buildCommands.push(`if`);
+          blockCommands.forEach((cmd) => buildCommands.push(`  ${cmd}`));
+          buildCommands.push(`then`);
+          buildCommands.push(`  echo "Block ${block.id} succeeded"`);
+
+          if (block.on_success) {
+            const nextCommands = this.getBlockCommandsById(
+              input.blocks,
+              block.on_success,
+            );
+            nextCommands.forEach((cmd) => buildCommands.push(`  ${cmd}`));
+          }
+
+          buildCommands.push(`else`);
+          buildCommands.push(
+            `  echo "Block ${block.id} failed, running fallback"`,
+          );
+          failureCommands.forEach((cmd) => buildCommands.push(`  ${cmd}`));
+          buildCommands.push(`fi`);
+        } else {
+          // 단순 실행 (조건부 로직 없음 또는 패키지 매니저)
+          buildCommands.push(`# Block: ${block.id}`);
+          if (isPackageManagerBlock) {
+            buildCommands.push(`# Package manager - fail fast on error`);
+          }
+          buildCommands.push(...blockCommands);
         }
+      });
+
+      if (buildCommands.length > 0) {
+        buildSpec.phases.build = {
+          commands: buildCommands,
+          'on-failure': input.on_failure || 'ABORT',
+        };
       }
-    });
+    }
+
+    // TEST 그룹 처리 (post_build 단계 초반부에 배치)
+    // AWS 공식 문서에 따르면 테스트는 post_build에서 수행
+    if (testBlocks.length > 0) {
+      const testCommands: string[] = [];
+
+      testBlocks.forEach((block) => {
+        // 블록별 명령어 생성
+        const blockCommands = this.getBlockCommandsById(input.blocks, block.id);
+
+        // 테스트 블록은 실패시 fallback 허용 (테스트는 실패해도 다른 테스트 실행 가능)
+        if (block.on_failed) {
+          // 실패시 다른 블록 실행하는 조건부 로직
+          const failureCommands = this.getBlockCommandsById(
+            input.blocks,
+            block.on_failed,
+          );
+
+          testCommands.push(`# Block: ${block.id} (with fallback)`);
+          testCommands.push(`if`);
+          blockCommands.forEach((cmd) => testCommands.push(`  ${cmd}`));
+          testCommands.push(`then`);
+          testCommands.push(`  echo "Test block ${block.id} succeeded"`);
+
+          if (block.on_success) {
+            const nextCommands = this.getBlockCommandsById(
+              input.blocks,
+              block.on_success,
+            );
+            nextCommands.forEach((cmd) => testCommands.push(`  ${cmd}`));
+          }
+
+          testCommands.push(`else`);
+          testCommands.push(
+            `  echo "Test block ${block.id} failed, running fallback"`,
+          );
+          failureCommands.forEach((cmd) => testCommands.push(`  ${cmd}`));
+          testCommands.push(`fi`);
+        } else {
+          // 단순 실행 (조건부 로직 없음)
+          testCommands.push(`# Test Block: ${block.id}`);
+          testCommands.push(...blockCommands);
+        }
+      });
+
+      if (testCommands.length > 0) {
+        // 테스트는 실패해도 계속 진행 가능하도록 CONTINUE 옵션 사용
+        buildSpec.phases.post_build = {
+          commands: testCommands,
+          'on-failure': 'CONTINUE',
+        };
+      }
+    }
+
+    // CUSTOM 그룹 처리 (pre_build 단계에서 실행 - AWS 공식 문서 권장사항)
+    // pre_build는 빌드 준비 단계로 사용
+    if (customBlocks.length > 0) {
+      const customCommands: string[] = [];
+
+      customBlocks.forEach((block) => {
+        // 블록별 명령어 생성
+        const blockCommands = this.getBlockCommandsById(input.blocks, block.id);
+
+        // CUSTOM 그룹도 조건부 실행 지원
+        if (block.on_failed) {
+          // 실패시 다른 블록 실행하는 조건부 로직
+          const failureCommands = this.getBlockCommandsById(
+            input.blocks,
+            block.on_failed,
+          );
+
+          customCommands.push(`# Custom Block: ${block.id} (with fallback)`);
+          customCommands.push(`if`);
+          blockCommands.forEach((cmd) => customCommands.push(`  ${cmd}`));
+          customCommands.push(`then`);
+          customCommands.push(`  echo "Custom block ${block.id} succeeded"`);
+
+          if (block.on_success) {
+            const nextCommands = this.getBlockCommandsById(
+              input.blocks,
+              block.on_success,
+            );
+            nextCommands.forEach((cmd) => customCommands.push(`  ${cmd}`));
+          }
+
+          customCommands.push(`else`);
+          customCommands.push(
+            `  echo "Custom block ${block.id} failed, running fallback"`,
+          );
+          failureCommands.forEach((cmd) => customCommands.push(`  ${cmd}`));
+          customCommands.push(`fi`);
+        } else {
+          // 단순 실행 (조건부 로직 없음)
+          customCommands.push(`# Custom Block: ${block.id}`);
+          customCommands.push(...blockCommands);
+        }
+      });
+
+      if (customCommands.length > 0) {
+        buildSpec.phases.pre_build = {
+          commands: customCommands,
+          'on-failure': input.on_failure || 'ABORT',
+        };
+      }
+    }
+
+    // RUN 그룹 처리 (post_build 단계에 배치 - AWS 공식 문서 권장사항)
+    // post_build는 빌드 후 작업 및 아티팩트 처리에 사용
+    if (runBlocks.length > 0) {
+      const runCommands: string[] = [];
+
+      runBlocks.forEach((block) => {
+        // 블록별 명령어 생성
+        const blockCommands = this.getBlockCommandsById(input.blocks, block.id);
+
+        // RUN 그룹은 실패시 fallback 허용 (배포 실패시 다른 배포 방법 시도 가능)
+        if (block.on_failed) {
+          // 실패시 다른 블록 실행하는 조건부 로직
+          const failureCommands = this.getBlockCommandsById(
+            input.blocks,
+            block.on_failed,
+          );
+
+          runCommands.push(`# Run Block: ${block.id} (with fallback)`);
+          runCommands.push(`if`);
+          blockCommands.forEach((cmd) => runCommands.push(`  ${cmd}`));
+          runCommands.push(`then`);
+          runCommands.push(`  echo "Run block ${block.id} succeeded"`);
+
+          if (block.on_success) {
+            const nextCommands = this.getBlockCommandsById(
+              input.blocks,
+              block.on_success,
+            );
+            nextCommands.forEach((cmd) => runCommands.push(`  ${cmd}`));
+          }
+
+          runCommands.push(`else`);
+          runCommands.push(
+            `  echo "Run block ${block.id} failed, running fallback"`,
+          );
+          failureCommands.forEach((cmd) => runCommands.push(`  ${cmd}`));
+          runCommands.push(`fi`);
+        } else {
+          // 단순 실행 (조건부 로직 없음)
+          runCommands.push(`# Run Block: ${block.id}`);
+          runCommands.push(...blockCommands);
+        }
+      });
+
+      // RUN 블록은 post_build 단계 마지막에 배치
+      if (runCommands.length > 0) {
+        if (!buildSpec.phases.post_build) {
+          buildSpec.phases.post_build = { commands: [], 'on-failure': 'CONTINUE' };
+        }
+        buildSpec.phases.post_build.commands = [
+          ...(buildSpec.phases.post_build.commands || []),
+          ...runCommands,
+        ];
+      }
+    }
 
     // 아티팩트 설정 처리
     if (input.artifacts && input.artifacts.length > 0) {
@@ -483,28 +646,42 @@ export class CodeBuildService {
   }
 
   /**
-   * JSON 형태의 빌드 설정으로 빌드를 시작합니다
+   * FlowBlock 기반 파이프라인으로 빌드를 시작합니다
    *
-   * JSON 설정을 AWS CodeBuild buildspec.yml로 변환한 후 빌드를 시작합니다.
-   * 이 메서드는 사용자 친화적인 JSON 형식을 AWS 표준 형식으로 변환합니다.
+   * FlowBlock 배열을 받아서 AWS CodeBuild buildspec.yml로 변환한 후 빌드를 시작합니다.
+   * 이 메서드는 사용자 친화적인 블록 기반 형식을 AWS 표준 형식으로 변환합니다.
    * 프로젝트명은 projectId를 기반으로 자동 생성됩니다.
    *
    * @param userId - 사용자 ID
    * @param projectId - 프로젝트 ID
-   * @param input - JSON 형태의 빌드 설정
+   * @param input - FlowBlock 기반 파이프라인 설정
    * @param environmentVariables - 추가 환경변수 (선택사항)
    * @returns 빌드 시작 결과 (빌드 ID, 상태, 프로젝트명, 시작시간)
    * @throws {Error} 빌드 시작에 실패한 경우
    *
    * @example
    * ```typescript
-   * const result = await codeBuildService.startBuildFromJson('user-123', 'proj-456', {
-   *   runtime: 'node:18',
-   *   commands: {
-   *     install: ['npm ci'],
-   *     build: ['npm run build']
-   *   },
-   *   artifacts: ['dist/*'],
+   * const result = await codeBuildService.startFlowBuild('user-123', 'proj-456', {
+   *   version: "0.2",
+   *   runtime: "node:18",
+   *   blocks: [
+   *     {
+   *       id: "install-deps",
+   *       block_type: "node_package_manager",
+   *       group_type: "build",
+   *       on_success: "build-app",
+   *       package_manager: "npm",
+   *       package_list: []
+   *     },
+   *     {
+   *       id: "build-app",
+   *       block_type: "custom_build_command",
+   *       group_type: "build",
+   *       on_success: "test-app",
+   *       custom_command: ["npm run build"]
+   *     }
+   *   ],
+   *   artifacts: ["dist/**"],
    *   environment_variables: {
    *     NODE_ENV: 'production'
    *   }
@@ -512,22 +689,21 @@ export class CodeBuildService {
    * console.log(result.buildId); // 'build-789'
    * ```
    */
-  async startBuildFromJson(
+  async startFlowBuild(
     userId: string,
     projectId: string,
-    input: BuildSpecInput,
+    input: FlowPipelineInput,
     environmentVariables?: Record<string, string>,
   ) {
-    // JSON을 buildspec.yml로 변환
-    const buildSpecYaml = this.convertJsonToBuildSpec(input);
+    // FlowBlock을 buildspec.yml로 변환
+    const buildSpecYaml = this.convertFlowPipelineToBuildSpec(input);
 
     this.logger.log(
-      `Generated buildspec.yml for project ${projectId}:`,
+      `Generated buildspec.yml for FlowBlock pipeline ${projectId}:`,
       buildSpecYaml,
     );
 
     // projectId를 기반으로 AWS CodeBuild 프로젝트명 생성
-    // 일반적으로 otto-{userId}-{projectId} 형식을 사용
     const projectName = `otto-${userId}-${projectId}`;
 
     // 동적으로 생성된 프로젝트명으로 빌드 시작
@@ -589,5 +765,74 @@ export class CodeBuildService {
   ): number | undefined {
     if (!startTime || !endTime) return undefined;
     return Math.round((endTime.getTime() - startTime.getTime()) / 1000);
+  }
+
+  /**
+   * 블록 ID로 해당 블록의 명령어들을 가져옵니다
+   * 블록의 on_success/on_failed 체인을 재귀적으로 처리하지 않고,
+   * 단일 블록의 명령어만 반환합니다.
+   *
+   * @private
+   * @param blocks - 모든 블록 배열
+   * @param blockId - 찾을 블록 ID
+   * @returns 해당 블록의 명령어 배열
+   */
+  private getBlockCommandsById(blocks: any[], blockId: string): string[] {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+    const block = blocks.find((b) => b.id === blockId);
+    if (!block) return [];
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    switch (block.block_type) {
+      case BlockTypeEnum.OS_PACKAGE_MANAGER:
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        if (block.package_list && block.package_list.length > 0) {
+          // apt-get의 경우 update를 먼저 실행
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          const commands = [];
+          if (block.package_manager === 'apt-get' || block.package_manager === 'apt') {
+            commands.push('apt-get update -y');
+          }
+          commands.push(
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+            `${block.package_manager} install -y ${block.package_list.join(' ')}`,
+          );
+          return commands;
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          return [`${block.package_manager} update -y`];
+        }
+
+      case BlockTypeEnum.NODE_PACKAGE_MANAGER:
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        if (block.package_list && block.package_list.length > 0) {
+          return [
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+            `${block.package_manager} install ${block.package_list.join(' ')}`,
+          ];
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          return [`${block.package_manager} install`];
+        }
+
+      case BlockTypeEnum.CUSTOM_BUILD_COMMAND:
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access
+        return block.custom_command || [];
+
+      case BlockTypeEnum.NODE_TEST_COMMAND:
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access
+        return block.test_command || [];
+
+      case BlockTypeEnum.CUSTOM_TEST_COMMAND:
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access
+        return block.custom_command || [];
+
+      case BlockTypeEnum.CUSTOM_RUN_COMMAND:
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access
+        return block.custom_command || [];
+
+      default:
+        return [];
+    }
   }
 }
