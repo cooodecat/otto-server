@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { CodeBuildModule } from './codebuild/codebuild.module';
 import { BuildsModule } from './builds/builds.module';
 import { CloudWatchLogsModule } from './cloudwatch-logs/cloudwatch-logs.module';
+import { LogsModule } from './logs/logs.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { CloudWatchLogsModule } from './cloudwatch-logs/cloudwatch-logs.module';
     BuildsModule,
     CodeBuildModule,
     CloudWatchLogsModule,
+    LogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
