@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { Octokit } from "https://esm.sh/@octokit/rest@19.0.0"
 import { createAppAuth } from "https://esm.sh/@octokit/auth-app@4.0.0"
+import { CodeBuildClient, CreateProjectCommand, StartBuildCommand } from "https://esm.sh/@aws-sdk/client-codebuild@3"
 
 const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -11,6 +12,13 @@ const supabase = createClient(
 // GitHub App 설정
 const GITHUB_APP_ID = Deno.env.get('OTTO_GITHUB_APP_ID') ?? ''
 const GITHUB_APP_PRIVATE_KEY = Deno.env.get('OTTO_GITHUB_APP_PRIVATE_KEY') ?? ''
+
+// AWS CodeBuild 설정
+const AWS_REGION = Deno.env.get('AWS_REGION') ?? 'ap-northeast-2'
+const AWS_ACCESS_KEY_ID = Deno.env.get('AWS_ACCESS_KEY_ID') ?? ''
+const AWS_SECRET_ACCESS_KEY = Deno.env.get('AWS_SECRET_ACCESS_KEY') ?? ''
+const AWS_CODEBUILD_SERVICE_ROLE = Deno.env.get('AWS_CODEBUILD_SERVICE_ROLE') ?? ''
+const CODEBUILD_ARTIFACTS_BUCKET = Deno.env.get('CODEBUILD_ARTIFACTS_BUCKET') ?? ''
 
 // GitHub App 인증 설정 (Installation ID는 동적으로 사용)
 const auth = createAppAuth({
@@ -39,11 +47,100 @@ function createErrorResponse(message: string, status: number = 400) {
 }
 
 // 성공 응답 생성
-function createSuccessResponse(data: any, status: number = 200) {
+function createSuccessResponse(data: Record<string, unknown>, status: number = 200) {
     return new Response(JSON.stringify(data), {
         status,
         headers: { 'Content-Type': 'application/json' }
     })
+}
+
+// CodeBuild 클라이언트 생성
+function createCodeBuildClient(): CodeBuildClient {
+    return new CodeBuildClient({
+        region: AWS_REGION,
+        credentials: {
+            accessKeyId: AWS_ACCESS_KEY_ID,
+            secretAccessKey: AWS_SECRET_ACCESS_KEY
+        }
+    })
+}
+
+// 기본 buildspec 생성
+function createDefaultBuildspec(): string {
+    return `version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Installing dependencies...
+      - npm install || yarn install || echo "No package manager found"
+  build:
+    commands:
+      - echo Build started
+      - npm run build || yarn build || echo "No build script found"
+  post_build:
+    commands:
+      - echo Build completed
+artifacts:
+  files:
+    - '**/*'
+  base-directory: '.'
+`
+}
+
+// CodeBuild 프로젝트 생성
+async function createCodeBuildProject(
+    projectName: string,
+    githubRepoUrl: string,
+    selectedBranch: string,
+    userId: string
+): Promise<{ projectName: string; projectArn: string; logGroupName: string }> {
+    const codebuildClient = createCodeBuildClient()
+
+    const sanitizedProjectName = projectName.replace(/[^a-zA-Z0-9-]/g, '-')
+    const codebuildProjectName = `otto-${sanitizedProjectName}-${userId}`
+    const logGroupName = `otto-${sanitizedProjectName}-${userId}-cloudwatch`
+    const artifactsName = `otto-${sanitizedProjectName}-${userId}-artifacts`
+
+    const createProjectCommand = new CreateProjectCommand({
+        name: codebuildProjectName,
+        source: {
+            type: 'GITHUB',
+            location: githubRepoUrl,
+            sourceVersion: `refs/heads/${selectedBranch}`,
+            buildspec: createDefaultBuildspec()
+        },
+        artifacts: {
+            type: 'S3',
+            location: CODEBUILD_ARTIFACTS_BUCKET,
+            name: artifactsName,
+            packaging: 'ZIP'
+        },
+        environment: {
+            type: 'LINUX_CONTAINER',
+            image: 'aws/codebuild/standard:7.0',
+            computeType: 'BUILD_GENERAL1_MEDIUM'
+        },
+        serviceRole: AWS_CODEBUILD_SERVICE_ROLE,
+        timeoutInMinutes: 60,
+        logsConfig: {
+            cloudWatchLogs: {
+                status: 'ENABLED',
+                groupName: logGroupName
+            }
+        }
+    })
+
+    const result = await codebuildClient.send(createProjectCommand)
+
+    if (!result.project?.arn || !result.project?.name) {
+        throw new Error('CodeBuild project creation failed: missing project data')
+    }
+
+    return {
+        projectName: result.project.name,
+        projectArn: result.project.arn,
+        logGroupName
+    }
 }
 
 // 프로젝트 생성
@@ -99,7 +196,7 @@ async function createProject(userId: string, body: any) {
 }
 
 // GitHub 연동 프로젝트 생성
-async function createProjectWithGithub(userId: string, body: any) {
+async function createProjectWithGithub(userId: string, body: Record<string, unknown>) {
     const {
         name,
         description,
@@ -110,7 +207,17 @@ async function createProjectWithGithub(userId: string, body: any) {
         githubOwner,
         isPrivate,
         selectedBranch
-    } = body
+    } = body as {
+        name: string
+        description: string
+        installationId: string
+        githubRepoId: string
+        githubRepoUrl: string
+        githubRepoName: string
+        githubOwner: string
+        isPrivate: boolean
+        selectedBranch: string
+    }
 
     // GitHub Installation 확인
     const { data: installation, error: installError } = await supabase
@@ -124,6 +231,7 @@ async function createProjectWithGithub(userId: string, body: any) {
         throw new Error('유효하지 않은 GitHub 설치 ID입니다')
     }
 
+    // 1. DB에 프로젝트 레코드 생성 (PENDING 상태)
     const { data, error } = await supabase
         .from('projects')
         .insert({
@@ -137,6 +245,7 @@ async function createProjectWithGithub(userId: string, body: any) {
             user_id: userId,
             selected_branch: selectedBranch || 'main',
             is_private: isPrivate,
+            codebuild_status: 'PENDING'
         })
         .select(`
       project_id,
@@ -150,7 +259,8 @@ async function createProjectWithGithub(userId: string, body: any) {
       is_active,
       is_private,
       created_at,
-      updated_at
+      updated_at,
+      codebuild_status
     `)
         .single()
 
@@ -161,20 +271,84 @@ async function createProjectWithGithub(userId: string, body: any) {
         throw new Error(error.message)
     }
 
-    return {
-        project: {
-            projectId: data.project_id,
-            name: data.name,
-            description: data.description,
-            isActive: data.is_active,
-            githubRepoId: data.github_repo_id,
-            selectedBranch: data.selected_branch,
-            githubRepoUrl: data.github_repo_url,
-            githubRepoName: data.github_repo_name,
-            githubOwner: data.github_owner,
-            isPrivate: data.is_private,
-            createdAt: data.created_at,
-        },
+    // 2. CodeBuild 프로젝트 생성
+    try {
+        const codebuildResult = await createCodeBuildProject(
+            name,
+            githubRepoUrl,
+            selectedBranch || 'main',
+            userId
+        )
+
+        // 3. 성공 시 CodeBuild 정보 업데이트
+        const { data: updatedData, error: updateError } = await supabase
+            .from('projects')
+            .update({
+                codebuild_status: 'CREATED',
+                codebuild_project_name: codebuildResult.projectName,
+                codebuild_project_arn: codebuildResult.projectArn,
+                cloudwatch_log_group_name: codebuildResult.logGroupName
+            })
+            .eq('project_id', data.project_id)
+            .select()
+            .single()
+
+        if (updateError) {
+            console.error('CodeBuild 정보 업데이트 실패:', updateError)
+        }
+
+        return {
+            project: {
+                projectId: data.project_id,
+                name: data.name,
+                description: data.description,
+                isActive: data.is_active,
+                githubRepoId: data.github_repo_id,
+                selectedBranch: data.selected_branch,
+                githubRepoUrl: data.github_repo_url,
+                githubRepoName: data.github_repo_name,
+                githubOwner: data.github_owner,
+                isPrivate: data.is_private,
+                createdAt: data.created_at,
+                codebuildStatus: 'CREATED',
+                codebuildProjectName: codebuildResult.projectName,
+                codebuildProjectArn: codebuildResult.projectArn,
+                cloudwatchLogGroupName: codebuildResult.logGroupName
+            },
+        }
+    } catch (codebuildError) {
+        // 4. CodeBuild 생성 실패 시 상태 업데이트
+        const errorMessage = codebuildError instanceof Error ? codebuildError.message : 'Unknown CodeBuild error'
+
+        const { error: failUpdateError } = await supabase
+            .from('projects')
+            .update({
+                codebuild_status: 'FAILED',
+                codebuild_error_message: errorMessage
+            })
+            .eq('project_id', data.project_id)
+
+        if (failUpdateError) {
+            console.error('CodeBuild 실패 상태 업데이트 실패:', failUpdateError)
+        }
+
+        return {
+            project: {
+                projectId: data.project_id,
+                name: data.name,
+                description: data.description,
+                isActive: data.is_active,
+                githubRepoId: data.github_repo_id,
+                selectedBranch: data.selected_branch,
+                githubRepoUrl: data.github_repo_url,
+                githubRepoName: data.github_repo_name,
+                githubOwner: data.github_owner,
+                isPrivate: data.is_private,
+                createdAt: data.created_at,
+                codebuildStatus: 'FAILED',
+                codebuildErrorMessage: errorMessage
+            },
+        }
     }
 }
 
@@ -417,9 +591,100 @@ async function getRepositoryBranches(userId: string, projectId: string) {
     }))
 }
 
+// CodeBuild 재시도
+async function retryCodeBuild(userId: string, projectId: string) {
+    // 프로젝트 소유권 확인
+    const { data: project, error: projectError } = await supabase
+        .from('projects')
+        .select(`
+            project_id,
+            name,
+            github_repo_url,
+            selected_branch,
+            codebuild_status
+        `)
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .single()
+
+    if (projectError || !project) {
+        throw new Error('프로젝트를 찾을 수 없거나 접근 권한이 없습니다')
+    }
+
+    if (project.codebuild_status !== 'FAILED') {
+        throw new Error('FAILED 상태의 프로젝트만 재시도할 수 있습니다')
+    }
+
+    // 재시도 상태로 변경
+    const { error: pendingError } = await supabase
+        .from('projects')
+        .update({
+            codebuild_status: 'PENDING',
+            codebuild_error_message: null
+        })
+        .eq('project_id', projectId)
+
+    if (pendingError) {
+        throw new Error('재시도 상태 업데이트 실패')
+    }
+
+    try {
+        // CodeBuild 프로젝트 생성
+        const codebuildResult = await createCodeBuildProject(
+            project.name,
+            project.github_repo_url,
+            project.selected_branch,
+            userId
+        )
+
+        // 성공 시 업데이트
+        const { data: updatedData, error: updateError } = await supabase
+            .from('projects')
+            .update({
+                codebuild_status: 'CREATED',
+                codebuild_project_name: codebuildResult.projectName,
+                codebuild_project_arn: codebuildResult.projectArn,
+                cloudwatch_log_group_name: codebuildResult.logGroupName,
+                codebuild_error_message: null
+            })
+            .eq('project_id', projectId)
+            .select()
+            .single()
+
+        if (updateError) {
+            throw new Error('성공 상태 업데이트 실패')
+        }
+
+        return {
+            message: 'CodeBuild 프로젝트가 성공적으로 생성되었습니다',
+            codebuildStatus: 'CREATED',
+            codebuildProjectName: codebuildResult.projectName,
+            codebuildProjectArn: codebuildResult.projectArn,
+            cloudwatchLogGroupName: codebuildResult.logGroupName
+        }
+    } catch (codebuildError) {
+        // 실패 시 업데이트
+        const errorMessage = codebuildError instanceof Error ? codebuildError.message : 'Unknown CodeBuild error'
+
+        const { error: failError } = await supabase
+            .from('projects')
+            .update({
+                codebuild_status: 'FAILED',
+                codebuild_error_message: errorMessage
+            })
+            .eq('project_id', projectId)
+
+        if (failError) {
+            console.error('CodeBuild 실패 상태 업데이트 실패:', failError)
+        }
+
+        throw new Error(`CodeBuild 재시도 실패: ${errorMessage}`)
+    }
+}
+
 // 선택된 브랜치 변경
-async function updateSelectedBranch(userId: string, projectId: string, body: any) {
-    const { branchName } = body
+async function updateSelectedBranch(userId: string, projectId: string, body: Record<string, unknown>) {
+    const { branchName } = body as { branchName: string }
 
     // 프로젝트 소유권 확인
     const { data: project, error: projectError } = await supabase
@@ -587,6 +852,22 @@ serve(async (req) => {
             const projectId = pathParts[2]
             const body = await req.json()
             const result = await updateSelectedBranch(userId, projectId, body)
+            return createSuccessResponse(result)
+        }
+
+        if (method === 'GET' && path.includes('/detail')) {
+            // GET /projects/:id/detail - 프로젝트 상세 정보 (기존 API와 동일)
+            const pathParts = path.split('/')
+            const projectId = pathParts[2]
+            const result = await getProjectDetail(userId, projectId)
+            return createSuccessResponse(result)
+        }
+
+        if (method === 'POST' && path.includes('/retry-codebuild')) {
+            // POST /projects/:id/retry-codebuild - CodeBuild 재시도
+            const pathParts = path.split('/')
+            const projectId = pathParts[2]
+            const result = await retryCodeBuild(userId, projectId)
             return createSuccessResponse(result)
         }
 

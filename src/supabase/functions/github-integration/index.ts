@@ -16,14 +16,25 @@ const FRONTEND_URL = Deno.env.get('FRONTEND_URL') ?? 'http://localhost:3000'
 
 // JWT 토큰에서 사용자 정보 추출
 async function getUserFromToken(authHeader: string) {
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user }, error } = await supabase.auth.getUser(token)
+    try {
+        const token = authHeader.replace('Bearer ', '')
+        const { data: { user }, error } = await supabase.auth.getUser(token)
 
-    if (error || !user) {
-        throw new Error('Invalid token')
+        if (error) {
+            console.error('Supabase auth error:', error)
+            throw new Error(`인증 오류: ${error.message}`)
+        }
+
+        if (!user) {
+            console.error('No user found in token')
+            throw new Error('유효하지 않은 토큰입니다')
+        }
+
+        return user
+    } catch (error) {
+        console.error('getUserFromToken error:', error)
+        throw error
     }
-
-    return user
 }
 
 // 에러 응답 생성
@@ -380,9 +391,9 @@ serve(async (req) => {
 
         // 인증이 필요한 엔드포인트 확인
         const authRequiredPaths = [
-            '/projects/github-installations',
-            '/projects/github/install-url',
-            '/projects/github/status'
+            '/github-integration/projects/github-installations',
+            '/github-integration/projects/github/install-url',
+            '/github-integration/projects/github/status'
         ]
 
         const needsAuth = authRequiredPaths.some(authPath => path.startsWith(authPath))
@@ -391,21 +402,32 @@ serve(async (req) => {
         if (needsAuth) {
             const authHeader = req.headers.get('authorization')
             if (!authHeader) {
+                console.log('No authorization header provided')
                 return createErrorResponse('로그인이 필요합니다', 401)
             }
-            const user = await getUserFromToken(authHeader)
-            userId = user.id
+
+            try {
+                const user = await getUserFromToken(authHeader)
+                userId = user.id
+                console.log('User authenticated successfully:', userId)
+            } catch (error) {
+                console.error('Authentication failed:', error)
+                const errorMessage = error instanceof Error ? error.message : '인증에 실패했습니다'
+                return createErrorResponse(errorMessage, 401)
+            }
         }
 
         // 라우팅 처리
-        if (method === 'POST' && path === '/projects/github-installations') {
+        console.log('Processing route:', { method, path, needsAuth, userId })
+
+        if (method === 'POST' && path === '/github-integration/projects/github-installations') {
             // POST /projects/github-installations - GitHub 설치 등록
             const body = await req.json()
             const result = await registerGithubInstallation(userId, body)
             return createSuccessResponse(result)
         }
 
-        if (method === 'GET' && path === '/projects/github-installations') {
+        if (method === 'GET' && path === '/github-integration/projects/github-installations') {
             // GET /projects/github-installations - GitHub 설치 목록 조회
             const result = await getUserGithubInstallations(userId)
             return createSuccessResponse(result)
@@ -429,19 +451,19 @@ serve(async (req) => {
             return createSuccessResponse(result)
         }
 
-        if (method === 'GET' && path === '/projects/github/install-url') {
+        if (method === 'GET' && path === '/github-integration/projects/github/install-url') {
             // GET /projects/github/install-url - GitHub App 설치 URL 생성
             const result = getGithubInstallUrl(userId)
             return createSuccessResponse(result)
         }
 
-        if (method === 'GET' && path === '/projects/github/status') {
+        if (method === 'GET' && path === '/github-integration/projects/github/status') {
             // GET /projects/github/status - GitHub 설치 상태 확인
             const result = await getGithubStatus(userId)
             return createSuccessResponse(result)
         }
 
-        if (method === 'GET' && path === '/projects/github/callback') {
+        if (method === 'GET' && path === '/github-integration/projects/github/callback') {
             // GET /projects/github/callback - GitHub 설치 콜백 처리
             const installationId = url.searchParams.get('installation_id') || ''
             const setupAction = url.searchParams.get('setup_action') || ''
@@ -458,11 +480,13 @@ serve(async (req) => {
             })
         }
 
+        console.log('No matching route found:', { method, path })
         return createErrorResponse('Not Found', 404)
 
     } catch (error) {
-        console.error('Error:', error)
+        console.error('Function error:', error)
         const errorMessage = error instanceof Error ? error.message : 'Internal Server Error'
+        console.error('Returning error response:', { errorMessage, status: 500 })
         return createErrorResponse(errorMessage, 500)
     }
 })

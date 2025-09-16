@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { Octokit } from "https://esm.sh/@octokit/rest@19.0.0"
 import { createAppAuth } from "https://esm.sh/@octokit/auth-app@4.0.0"
+import { CodeBuildClient, StartBuildCommand } from "https://esm.sh/@aws-sdk/client-codebuild@3"
 
 const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -13,6 +14,11 @@ const GITHUB_APP_ID = Deno.env.get('OTTO_GITHUB_APP_ID') ?? ''
 const GITHUB_APP_PRIVATE_KEY = Deno.env.get('OTTO_GITHUB_APP_PRIVATE_KEY') ?? ''
 const GITHUB_WEBHOOK_SECRET = Deno.env.get('OTTO_GITHUB_WEBHOOK_SECRET') ?? ''
 
+// AWS CodeBuild 설정
+const AWS_REGION = Deno.env.get('AWS_REGION') ?? 'ap-northeast-2'
+const AWS_ACCESS_KEY_ID = Deno.env.get('AWS_ACCESS_KEY_ID') ?? ''
+const AWS_SECRET_ACCESS_KEY = Deno.env.get('AWS_SECRET_ACCESS_KEY') ?? ''
+
 // 에러 응답 생성
 function createErrorResponse(message: string, status: number = 400) {
     return new Response(JSON.stringify({ error: message }), {
@@ -22,11 +28,48 @@ function createErrorResponse(message: string, status: number = 400) {
 }
 
 // 성공 응답 생성
-function createSuccessResponse(data: any, status: number = 200) {
+function createSuccessResponse(data: Record<string, unknown>, status: number = 200) {
     return new Response(JSON.stringify(data), {
         status,
         headers: { 'Content-Type': 'application/json' }
     })
+}
+
+// CodeBuild 클라이언트 생성
+function createCodeBuildClient(): CodeBuildClient {
+    return new CodeBuildClient({
+        region: AWS_REGION,
+        credentials: {
+            accessKeyId: AWS_ACCESS_KEY_ID,
+            secretAccessKey: AWS_SECRET_ACCESS_KEY
+        }
+    })
+}
+
+// CodeBuild 시작
+async function startCodeBuild(projectName: string, sourceVersion: string): Promise<void> {
+    const codebuildClient = createCodeBuildClient()
+
+    const startBuildCommand = new StartBuildCommand({
+        projectName,
+        sourceVersion: `refs/heads/${sourceVersion}` // 브랜치 지정
+    })
+
+    try {
+        const result = await codebuildClient.send(startBuildCommand)
+        console.log('CodeBuild started successfully:', {
+            projectName,
+            buildId: result.build?.id,
+            sourceVersion
+        })
+    } catch (error) {
+        console.error('Failed to start CodeBuild:', {
+            projectName,
+            sourceVersion,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        })
+        throw error
+    }
 }
 
 // GitHub 웹훅 서명 검증
@@ -115,12 +158,14 @@ async function handlePushEvent(payload: any) {
     })
 
     try {
-        // 해당 저장소에 연결된 프로젝트들 조회
+        // 해당 저장소에 연결된 프로젝트들 조회 (CodeBuild 정보 포함)
         const { data: projects, error: projectsError } = await supabase
             .from('projects')
             .select(`
         project_id,
         selected_branch,
+        codebuild_status,
+        codebuild_project_name,
         github_installations!inner (
           github_installation_id
         )
@@ -128,6 +173,7 @@ async function handlePushEvent(payload: any) {
             .eq('github_owner', githubOwner)
             .eq('github_repo_name', githubRepoName)
             .eq('github_installations.github_installation_id', githubInstallationId)
+            .eq('codebuild_status', 'CREATED') // CodeBuild가 생성된 프로젝트만
 
         if (projectsError) {
             console.error('Error fetching projects:', projectsError)
@@ -172,34 +218,41 @@ async function handlePushEvent(payload: any) {
                     console.warn('Failed to record push event:', error)
                 }
 
-                // 2. 해당 브랜치가 프로젝트의 선택된 브랜치인 경우에만 추가 처리
-                if (project.selected_branch === pushedBranch) {
-                    console.log('Recording push event for matching branch:', {
+                // 2. 해당 브랜치가 프로젝트의 선택된 브랜치인 경우 CodeBuild 트리거
+                if (project.selected_branch === pushedBranch && project.codebuild_project_name) {
+                    console.log('Triggering CodeBuild for matching branch:', {
                         projectId: project.project_id,
                         selectedBranch: project.selected_branch,
                         pushedBranch,
+                        codebuildProjectName: project.codebuild_project_name,
                     })
 
-                    // 선택된 브랜치에 대한 Push 이벤트 기록
+                    // CodeBuild 시작
                     try {
-                        await supabase
-                            .from('push_events')
-                            .insert({
-                                project_id: project.project_id,
-                                commit_sha: commitSha,
-                                commit_message: commitMessage,
-                                commit_author_name: pusherName,
-                                pushed_at: new Date().toISOString(),
-                                branch_name: pushedBranch,
-                            })
-                    } catch (error) {
-                        console.warn('Failed to record push event for selected branch:', error)
+                        await startCodeBuild(project.codebuild_project_name, pushedBranch)
+
+                        // 빌드 시작 성공 로그
+                        console.log('CodeBuild triggered successfully:', {
+                            projectId: project.project_id,
+                            codebuildProjectName: project.codebuild_project_name,
+                            branch: pushedBranch,
+                            commitSha
+                        })
+                    } catch (buildError) {
+                        console.error('Failed to trigger CodeBuild:', {
+                            projectId: project.project_id,
+                            codebuildProjectName: project.codebuild_project_name,
+                            error: buildError instanceof Error ? buildError.message : 'Unknown error'
+                        })
                     }
                 } else {
-                    console.log('Branch mismatch, skipping build trigger:', {
+                    const reason = project.selected_branch !== pushedBranch ? 'branch mismatch' : 'no codebuild project'
+                    console.log(`Skipping CodeBuild trigger (${reason}):`, {
                         projectId: project.project_id,
                         selectedBranch: project.selected_branch,
                         pushedBranch,
+                        codebuildProjectName: project.codebuild_project_name,
+                        codebuildStatus: project.codebuild_status
                     })
                 }
             })
@@ -277,13 +330,13 @@ serve(async (req) => {
         }
 
         // 라우팅 처리
-        if (method === 'GET' && path === '/webhooks/github') {
+        if (method === 'GET' && path === '/github-webhook/webhooks/github') {
             // GET /webhooks/github - 웹훅 엔드포인트 상태 확인
             const result = getWebhookStatus()
             return createSuccessResponse(result)
         }
 
-        if (method === 'POST' && path === '/webhooks/github') {
+        if (method === 'POST' && path === '/github-webhook/webhooks/github') {
             // POST /webhooks/github - GitHub 웹훅 이벤트 처리
             const eventType = req.headers.get('x-github-event')
             const deliveryId = req.headers.get('x-github-delivery')
