@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { CloudWatchLogsService } from '../cloudwatch-logs/cloudwatch-logs.service';
 import { RawLogEntry } from '../cloudwatch-logs/types/cloudwatch.types';
+import { CodeBuildService } from '../codebuild/codebuild.service';
 
 /**
  * CloudWatch Logs API에서 가져온 단일 로그 이벤트를 나타냅니다
@@ -12,6 +13,32 @@ interface LogEvent {
   message: string;
   /** CloudWatch에 로그가 수집된 Unix 타임스탬프 */
   ingestionTime: number;
+}
+
+/**
+ * 서버에서 파싱/정규화한 로그 이벤트
+ */
+interface NormalizedLogEvent {
+  /** 이벤트 시각 (ms) */
+  ts: number;
+  /** 원본 메시지 (마스킹/정규화 가능) */
+  message: string;
+  /** 로그 소스 태그 (예: Container, CodeBuild 등) */
+  source?: string;
+  /** 수준 */
+  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG' | 'UNKNOWN';
+  /** CodeBuild 단계 (예: INSTALL, PRE_BUILD, BUILD, POST_BUILD, FINAL) */
+  phase?: string;
+  /** Phase context status code 등 에러 코드 */
+  code?: string;
+  /** 빌드 상태 힌트 */
+  buildStatus?:
+    | 'SUCCEEDED'
+    | 'FAILED'
+    | 'STOPPED'
+    | 'TIMED_OUT'
+    | 'IN_PROGRESS'
+    | 'UNKNOWN';
 }
 
 /**
@@ -45,6 +72,67 @@ function convertToLogEvent(rawEntry: RawLogEntry): LogEvent {
 }
 
 /**
+ * LogEvent를 NormalizedLogEvent로 변환 (간단한 정규식 기반)
+ * CodeBuild 표준 로그 패턴만 가볍게 파싱합니다.
+ */
+function normalizeLogEvent(event: LogEvent): NormalizedLogEvent {
+  const msg = event.message || '';
+
+  // [Source] 접두사 추출
+  let source: string | undefined;
+  const srcMatch = msg.match(/^\[(?<src>[^\]]+)\]\s*/);
+  if (srcMatch && srcMatch.groups?.src) {
+    source = srcMatch.groups.src.trim();
+  }
+
+  // Level 추론
+  const lower = msg.toLowerCase();
+  let level: NormalizedLogEvent['level'] = 'INFO';
+  if (/(error|failed)/i.test(msg)) level = 'ERROR';
+  else if (/(warn|warning)/i.test(msg)) level = 'WARN';
+  else if (/debug/i.test(msg)) level = 'DEBUG';
+  else level = 'INFO';
+
+  // Phase/Status/Code 추출
+  let phase: string | undefined;
+  let buildStatus: NormalizedLogEvent['buildStatus'] | undefined;
+  let code: string | undefined;
+
+  // Entering phase X
+  const enterPhase = msg.match(/Entering phase\s+([A-Z_]+)/i);
+  if (enterPhase) phase = enterPhase[1].toUpperCase();
+
+  // Phase complete: X State: Y
+  const phaseComplete = msg.match(
+    /Phase complete:\s*([A-Z_]+)\s*State:\s*([A-Z_]+)/i,
+  );
+  if (phaseComplete) {
+    phase = phaseComplete[1].toUpperCase();
+    const st = phaseComplete[2].toUpperCase();
+    if (st === 'SUCCEEDED') buildStatus = 'IN_PROGRESS';
+    if (st === 'FAILED') buildStatus = 'FAILED';
+  }
+
+  // BUILD SUCCEEDED/FAILED (요약)
+  if (/BUILD\s+SUCCEEDED/i.test(msg)) buildStatus = 'SUCCEEDED';
+  if (/BUILD\s+FAILED/i.test(msg)) buildStatus = 'FAILED';
+
+  // Phase context status code: CODE
+  const codeMatch = msg.match(/Phase context status code:\s*([A-Z0-9_-]+)/i);
+  if (codeMatch) code = codeMatch[1];
+
+  return {
+    ts: event.timestamp,
+    message: msg,
+    source,
+    level,
+    phase,
+    code,
+    buildStatus: buildStatus || 'UNKNOWN',
+  };
+}
+
+/**
  * 빌드 로그 수집 상태를 관리하기 위한 내부 데이터 구조
  */
 interface BuildLogData {
@@ -54,6 +142,14 @@ interface BuildLogData {
   logStreamName: string;
   /** 로그 수집을 계속하기 위한 페이지네이션 토큰 */
   lastToken?: string;
+  /** 마지막 새 로그가 관측된 시각(ms) */
+  lastLogAt?: number;
+  /** 마지막 상태 점검 시각(ms) */
+  lastStatusCheckAt?: number;
+  /** 연속 오류 횟수 */
+  consecutiveErrors?: number;
+  /** 백오프 종료 시각(ms). 현재 시간이 이 값보다 작으면 호출 스킵 */
+  backoffUntil?: number;
   /** 메모리에 캐시된 로그 이벤트들 */
   logs: LogEvent[];
   /** 로그 수집이 현재 활성화되어 있는지 여부 */
@@ -142,7 +238,14 @@ export class LogsService implements OnModuleDestroy {
   /** SSE 이벤트 발생을 위한 LogsController 참조 */
   private logsController: any;
 
-  constructor(private readonly cloudWatchLogsService: CloudWatchLogsService) {}
+  // 폴링 제어 상수
+  private readonly IDLE_STATUS_CHECK_MS = 30_000; // 최근 로그 없을 때 상태 점검 간격
+  private readonly MAX_BACKOFF_MS = 60_000; // 최대 백오프 60초
+
+  constructor(
+    private readonly cloudWatchLogsService: CloudWatchLogsService,
+    private readonly codeBuildService: CodeBuildService,
+  ) {}
 
   /**
    * 특정 빌드에 대한 주기적 로그 수집을 시작합니다
@@ -264,6 +367,11 @@ export class LogsService implements OnModuleDestroy {
         return;
       }
 
+      // 백오프 중이면 스킵
+      if (buildData.backoffUntil && Date.now() < buildData.backoffUntil) {
+        return;
+      }
+
       // CloudWatch API를 사용하여 로그 수집
       const result = await this.cloudWatchLogsService.getLogsPaginated(
         buildId,
@@ -273,9 +381,15 @@ export class LogsService implements OnModuleDestroy {
         },
       );
 
+      // 토큰은 신규 로그가 없어도 항상 갱신 (중복/비효율 방지)
+      buildData.lastToken = result.nextToken;
+
       if (result.logs.length > 0) {
         // RawLogEntry를 LogEvent로 변환
         const newLogEvents: LogEvent[] = result.logs.map(convertToLogEvent);
+        const normalized: NormalizedLogEvent[] = newLogEvents.map((e) =>
+          normalizeLogEvent(e),
+        );
 
         // 새 로그를 캐시에 추가
         buildData.logs.push(...newLogEvents);
@@ -285,20 +399,47 @@ export class LogsService implements OnModuleDestroy {
           buildData.logs = buildData.logs.slice(-this.MAX_CACHED_LOGS);
         }
 
-        // 토큰 업데이트
-        buildData.lastToken = result.nextToken;
+        // 마지막 활동 시각 업데이트 및 오류 카운터 초기화
+        buildData.lastLogAt = Date.now();
+        buildData.consecutiveErrors = 0;
+        buildData.backoffUntil = undefined;
 
         this.logger.debug(
           `Collected ${result.logs.length} new log events for build: ${buildId}`,
         );
 
-        // SSE로 새 로그를 프론트엔드에 전송
-        this.notifyNewLogs(buildId, newLogEvents);
+        // SSE로 새 로그를 프론트엔드에 전송 (정규화 포함)
+        this.notifyNewLogs(buildId, newLogEvents, normalized);
       } else {
         this.logger.debug(`No new logs for build: ${buildId}`);
+
+        // 유휴 상태가 일정 시간 지속되면 빌드 터미널 상태 확인 후 자동 중단
+        const now = Date.now();
+        const lastActivity = buildData.lastLogAt || now;
+        const shouldCheck =
+          !buildData.lastStatusCheckAt ||
+          now - buildData.lastStatusCheckAt >= this.IDLE_STATUS_CHECK_MS;
+        if (shouldCheck && now - lastActivity >= this.IDLE_STATUS_CHECK_MS) {
+          buildData.lastStatusCheckAt = now;
+          await this.checkAndAutoStopIfTerminal(buildId);
+        }
       }
     } catch (error) {
       this.logger.error(`Error collecting logs for build ${buildId}:`, error);
+      // 연속 오류 지수 백오프
+      const buildData = this.buildLogs.get(buildId);
+      if (buildData) {
+        buildData.consecutiveErrors = (buildData.consecutiveErrors || 0) + 1;
+        const base = this.POLL_INTERVAL;
+        const backoff = Math.min(
+          base * Math.pow(2, (buildData.consecutiveErrors || 1) - 1),
+          this.MAX_BACKOFF_MS,
+        );
+        buildData.backoffUntil = Date.now() + backoff;
+        this.logger.warn(
+          `Backoff for build ${buildId}: ${backoff}ms (errors=${buildData.consecutiveErrors})`,
+        );
+      }
     }
   }
 
@@ -398,7 +539,11 @@ export class LogsService implements OnModuleDestroy {
    * @see LogsController.emitLogEvent SSE 전송 구현을 위해
    * @private
    */
-  private notifyNewLogs(buildId: string, newEvents: LogEvent[]): void {
+  private notifyNewLogs(
+    buildId: string,
+    newEvents: LogEvent[],
+    normalized?: NormalizedLogEvent[],
+  ): void {
     this.logger.debug(
       `New logs available for build ${buildId}: ${newEvents.length} events`,
     );
@@ -408,7 +553,7 @@ export class LogsService implements OnModuleDestroy {
       this.logsController &&
       typeof this.logsController.emitLogEvent === 'function'
     ) {
-      this.logsController.emitLogEvent(buildId, newEvents);
+      this.logsController.emitLogEvent(buildId, newEvents, normalized);
     }
   }
 
@@ -480,5 +625,31 @@ export class LogsService implements OnModuleDestroy {
       clearInterval(interval);
     }
     this.intervals.clear();
+  }
+
+  /**
+   * CodeBuild 상태가 터미널 상태이면 자동 중단합니다
+   */
+  private async checkAndAutoStopIfTerminal(buildId: string): Promise<void> {
+    try {
+      const status = await this.codeBuildService.getBuildStatus(buildId);
+      const s = (status.buildStatus || '').toUpperCase();
+      const isTerminal = [
+        'SUCCEEDED',
+        'FAILED',
+        'STOPPED',
+        'TIMED_OUT',
+      ].includes(s);
+      if (isTerminal) {
+        this.logger.log(
+          `Build ${buildId} reached terminal state ${s}. Stopping log collection.`,
+        );
+        this.stopLogCollection(buildId);
+      }
+    } catch (e) {
+      this.logger.warn(
+        `Failed to check build terminal status for ${buildId}: ${String(e)}`,
+      );
+    }
   }
 }

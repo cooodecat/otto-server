@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Param, Query, Res, Sse, MessageEvent } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Query,
+  Res,
+  Sse,
+  MessageEvent,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { Observable, Subject } from 'rxjs';
 import { map, filter } from 'rxjs/operators';
@@ -17,6 +26,25 @@ interface LogEvent {
 }
 
 /**
+ * Normalized log structure after server-side parsing
+ */
+interface NormalizedLogEvent {
+  ts: number;
+  message: string;
+  source?: string;
+  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG' | 'UNKNOWN';
+  phase?: string;
+  code?: string;
+  buildStatus?:
+    | 'SUCCEEDED'
+    | 'FAILED'
+    | 'STOPPED'
+    | 'TIMED_OUT'
+    | 'IN_PROGRESS'
+    | 'UNKNOWN';
+}
+
+/**
  * Internal event structure for SSE log broadcasting
  */
 interface SSELogEvent {
@@ -24,6 +52,8 @@ interface SSELogEvent {
   buildId: string;
   /** Array of new log events to broadcast */
   events: LogEvent[];
+  /** Server-parsed normalized logs (same order as events) */
+  normalized?: NormalizedLogEvent[];
 }
 
 /**
@@ -109,7 +139,10 @@ export class LogsController {
 
   // 빌드 상태 확인
   @Get('builds/:buildId/status')
-  getBuildStatus(@Param('buildId') buildId: string): { buildId: string; isActive: boolean } {
+  getBuildStatus(@Param('buildId') buildId: string): {
+    buildId: string;
+    isActive: boolean;
+  } {
     return {
       buildId,
       isActive: this.logsService.isBuildActive(buildId),
@@ -158,6 +191,7 @@ export class LogsController {
         data: JSON.stringify({
           buildId: event.buildId,
           events: event.events,
+          normalized: event.normalized,
           timestamp: Date.now(),
         }),
       })),
@@ -173,12 +207,12 @@ export class LogsController {
         data: JSON.stringify({
           buildId: event.buildId,
           events: event.events,
+          normalized: event.normalized,
           timestamp: Date.now(),
         }),
       })),
     );
   }
-
 
   /**
    * Emits log events to all connected SSE clients
@@ -195,7 +229,11 @@ export class LogsController {
    * controller.emitLogEvent('build-123', newLogEvents);
    * ```
    */
-  emitLogEvent(buildId: string, events: LogEvent[]): void {
-    this.logEventSubject.next({ buildId, events });
+  emitLogEvent(
+    buildId: string,
+    events: LogEvent[],
+    normalized?: NormalizedLogEvent[],
+  ): void {
+    this.logEventSubject.next({ buildId, events, normalized });
   }
 }
