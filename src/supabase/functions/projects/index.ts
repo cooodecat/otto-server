@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { Octokit } from "https://esm.sh/@octokit/rest@19.0.0"
 import { createAppAuth } from "https://esm.sh/@octokit/auth-app@4.0.0"
-import { CodeBuildClient, CreateProjectCommand, StartBuildCommand } from "https://esm.sh/@aws-sdk/client-codebuild@3"
+// AWS CodeBuild 관련 코드는 별도 서비스로 분리됨
 
 const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -38,11 +38,21 @@ async function getUserFromToken(authHeader: string) {
     return user
 }
 
+// CORS 헤더 설정
+const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
+}
+
 // 에러 응답 생성
 function createErrorResponse(message: string, status: number = 400) {
     return new Response(JSON.stringify({ error: message }), {
         status,
-        headers: { 'Content-Type': 'application/json' }
+        headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders
+        }
     })
 }
 
@@ -50,19 +60,101 @@ function createErrorResponse(message: string, status: number = 400) {
 function createSuccessResponse(data: Record<string, unknown>, status: number = 200) {
     return new Response(JSON.stringify(data), {
         status,
-        headers: { 'Content-Type': 'application/json' }
+        headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders
+        }
     })
 }
 
-// CodeBuild 클라이언트 생성
-function createCodeBuildClient(): CodeBuildClient {
-    return new CodeBuildClient({
-        region: AWS_REGION,
-        credentials: {
-            accessKeyId: AWS_ACCESS_KEY_ID,
-            secretAccessKey: AWS_SECRET_ACCESS_KEY
-        }
-    })
+// AWS Signature v4 구현
+async function createSignature(
+    method: string,
+    host: string,
+    path: string,
+    queryString: string,
+    headers: Record<string, string>,
+    payload: string,
+    service: string,
+    region: string,
+    accessKeyId: string,
+    secretAccessKey: string
+): Promise<string> {
+    const algorithm = 'AWS4-HMAC-SHA256'
+    const date = new Date()
+    const dateStamp = date.toISOString().slice(0, 10).replace(/-/g, '')
+    const amzDate = date.toISOString().replace(/[:\-]|\.\d{3}/g, '')
+
+    const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`
+
+    // Canonical request
+    const canonicalHeaders = Object.keys(headers)
+        .sort()
+        .map(key => `${key.toLowerCase()}:${headers[key]}`)
+        .join('\n') + '\n'
+
+    const signedHeaders = Object.keys(headers)
+        .sort()
+        .map(key => key.toLowerCase())
+        .join(';')
+
+    const canonicalRequest = [
+        method,
+        path,
+        queryString,
+        canonicalHeaders,
+        signedHeaders,
+        await sha256(payload)
+    ].join('\n')
+
+    // String to sign
+    const stringToSign = [
+        algorithm,
+        amzDate,
+        credentialScope,
+        await sha256(canonicalRequest)
+    ].join('\n')
+
+    // Signing key
+    const kDate = await hmacSha256(`AWS4${secretAccessKey}`, dateStamp)
+    const kRegion = await hmacSha256(kDate, region)
+    const kService = await hmacSha256(kRegion, service)
+    const kSigning = await hmacSha256(kService, 'aws4_request')
+
+    const signature = await hmacSha256(kSigning, stringToSign)
+
+    return `${algorithm} Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${arrayBufferToHex(signature)}`
+}
+
+// SHA256 해시 함수
+async function sha256(message: string): Promise<string> {
+    const encoder = new TextEncoder()
+    const data = encoder.encode(message)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+    return arrayBufferToHex(hashBuffer)
+}
+
+// HMAC-SHA256 함수
+async function hmacSha256(key: string | ArrayBuffer, message: string): Promise<ArrayBuffer> {
+    const encoder = new TextEncoder()
+    const keyData = typeof key === 'string' ? encoder.encode(key) : key
+    const messageData = encoder.encode(message)
+
+    const cryptoKey = await crypto.subtle.importKey(
+        'raw',
+        keyData,
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    )
+
+    return await crypto.subtle.sign('HMAC', cryptoKey, messageData)
+}
+
+// ArrayBuffer를 Hex 문자열로 변환
+function arrayBufferToHex(buffer: ArrayBuffer): string {
+    const byteArray = new Uint8Array(buffer)
+    return Array.from(byteArray, byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 // 기본 buildspec 생성
@@ -94,14 +186,12 @@ async function createCodeBuildProject(
     selectedBranch: string,
     userId: string
 ): Promise<{ projectName: string; projectArn: string; logGroupName: string }> {
-    const codebuildClient = createCodeBuildClient()
-
     const sanitizedProjectName = projectName.replace(/[^a-zA-Z0-9-]/g, '-')
     const codebuildProjectName = `otto-${sanitizedProjectName}-${userId}`
     const logGroupName = `otto-${sanitizedProjectName}-${userId}-cloudwatch`
     const artifactsName = `otto-${sanitizedProjectName}-${userId}-artifacts`
 
-    const createProjectCommand = new CreateProjectCommand({
+    const payload = {
         name: codebuildProjectName,
         source: {
             type: 'GITHUB',
@@ -128,9 +218,53 @@ async function createCodeBuildProject(
                 groupName: logGroupName
             }
         }
+    }
+
+    const payloadString = JSON.stringify(payload)
+    const host = `codebuild.${AWS_REGION}.amazonaws.com`
+    const path = '/'
+    const amzDate = new Date().toISOString().replace(/[:\-]|\.\d{3}/g, '')
+
+    const headers = {
+        'Host': host,
+        'X-Amz-Date': amzDate,
+        'X-Amz-Target': 'CodeBuild_20161006.CreateProject',
+        'Content-Type': 'application/x-amz-json-1.1'
+    }
+
+    const authHeader = await createSignature(
+        'POST',
+        host,
+        path,
+        '',
+        headers,
+        payloadString,
+        'codebuild',
+        AWS_REGION,
+        AWS_ACCESS_KEY_ID,
+        AWS_SECRET_ACCESS_KEY
+    )
+
+    const response = await fetch(`https://${host}${path}`, {
+        method: 'POST',
+        headers: {
+            ...headers,
+            'Authorization': authHeader
+        },
+        body: payloadString
     })
 
-    const result = await codebuildClient.send(createProjectCommand)
+    if (!response.ok) {
+        const errorText = await response.text()
+        console.error('CodeBuild API Error:', {
+            status: response.status,
+            statusText: response.statusText,
+            body: errorText
+        })
+        throw new Error(`CodeBuild project creation failed: ${response.status} ${response.statusText}`)
+    }
+
+    const result = await response.json() as { project: { arn: string; name: string } }
 
     if (!result.project?.arn || !result.project?.name) {
         throw new Error('CodeBuild project creation failed: missing project data')
@@ -167,8 +301,6 @@ async function createProject(userId: string, body: any) {
       github_repo_name,
       github_repo_url,
       selected_branch,
-      is_active,
-      is_private,
       created_at,
       updated_at
     `)
@@ -205,7 +337,6 @@ async function createProjectWithGithub(userId: string, body: Record<string, unkn
         githubRepoUrl,
         githubRepoName,
         githubOwner,
-        isPrivate,
         selectedBranch
     } = body as {
         name: string
@@ -215,7 +346,6 @@ async function createProjectWithGithub(userId: string, body: Record<string, unkn
         githubRepoUrl: string
         githubRepoName: string
         githubOwner: string
-        isPrivate: boolean
         selectedBranch: string
     }
 
@@ -244,7 +374,6 @@ async function createProjectWithGithub(userId: string, body: Record<string, unkn
             installation_id: installationId,
             user_id: userId,
             selected_branch: selectedBranch || 'main',
-            is_private: isPrivate,
             codebuild_status: 'PENDING'
         })
         .select(`
@@ -256,8 +385,6 @@ async function createProjectWithGithub(userId: string, body: Record<string, unkn
       github_repo_name,
       github_repo_url,
       selected_branch,
-      is_active,
-      is_private,
       created_at,
       updated_at,
       codebuild_status
@@ -302,13 +429,11 @@ async function createProjectWithGithub(userId: string, body: Record<string, unkn
                 projectId: data.project_id,
                 name: data.name,
                 description: data.description,
-                isActive: data.is_active,
                 githubRepoId: data.github_repo_id,
                 selectedBranch: data.selected_branch,
                 githubRepoUrl: data.github_repo_url,
                 githubRepoName: data.github_repo_name,
                 githubOwner: data.github_owner,
-                isPrivate: data.is_private,
                 createdAt: data.created_at,
                 codebuildStatus: 'CREATED',
                 codebuildProjectName: codebuildResult.projectName,
@@ -337,13 +462,11 @@ async function createProjectWithGithub(userId: string, body: Record<string, unkn
                 projectId: data.project_id,
                 name: data.name,
                 description: data.description,
-                isActive: data.is_active,
                 githubRepoId: data.github_repo_id,
                 selectedBranch: data.selected_branch,
                 githubRepoUrl: data.github_repo_url,
                 githubRepoName: data.github_repo_name,
                 githubOwner: data.github_owner,
-                isPrivate: data.is_private,
                 createdAt: data.created_at,
                 codebuildStatus: 'FAILED',
                 codebuildErrorMessage: errorMessage
@@ -365,8 +488,6 @@ async function getUserProjects(userId: string) {
       github_repo_name,
       github_repo_url,
       selected_branch,
-      is_active,
-      is_private,
       installation_id,
       created_at,
       updated_at,
@@ -411,8 +532,6 @@ async function getProjectDetail(userId: string, projectId: string) {
       github_repo_name,
       github_repo_url,
       selected_branch,
-      is_active,
-      is_private,
       installation_id,
       created_at,
       updated_at,
@@ -460,7 +579,6 @@ async function connectRepository(userId: string, projectId: string, body: any) {
         githubRepoUrl,
         githubRepoName,
         githubOwner,
-        isPrivate,
         selectedBranch,
         installationId
     } = body
@@ -498,7 +616,6 @@ async function connectRepository(userId: string, projectId: string, body: any) {
             github_repo_url: githubRepoUrl,
             github_repo_name: githubRepoName,
             github_owner: githubOwner,
-            is_private: isPrivate,
             selected_branch: selectedBranch,
             installation_id: installationId,
         })
@@ -512,8 +629,6 @@ async function connectRepository(userId: string, projectId: string, body: any) {
       github_repo_name,
       github_repo_url,
       selected_branch,
-      is_active,
-      is_private,
       installation_id,
       created_at,
       updated_at
@@ -682,6 +797,8 @@ async function retryCodeBuild(userId: string, projectId: string) {
     }
 }
 
+// CodeBuild 재시도는 별도 서비스에서 처리
+
 // 선택된 브랜치 변경
 async function updateSelectedBranch(userId: string, projectId: string, body: Record<string, unknown>) {
     const { branchName } = body as { branchName: string }
@@ -748,8 +865,6 @@ async function updateSelectedBranch(userId: string, projectId: string, body: Rec
       github_repo_name,
       github_repo_url,
       selected_branch,
-      is_active,
-      is_private,
       installation_id,
       created_at,
       updated_at
@@ -802,71 +917,71 @@ serve(async (req) => {
         const userId = user.id
 
         // 라우팅 처리
-        if (method === 'POST' && path === '/projects') {
-            // POST /projects - 프로젝트 생성
+        if (method === 'POST' && path === '/projects/projects') {
+            // POST /projects/projects - 프로젝트 생성
             const body = await req.json()
             const result = await createProject(userId, body)
             return createSuccessResponse(result)
         }
 
-        if (method === 'POST' && path === '/projects/with-github') {
-            // POST /projects/with-github - GitHub 연동 프로젝트 생성
+        if (method === 'POST' && path === '/projects/projects/with-github') {
+            // POST /projects/projects/with-github - GitHub 연동 프로젝트 생성
             const body = await req.json()
             const result = await createProjectWithGithub(userId, body)
             return createSuccessResponse(result)
         }
 
-        if (method === 'GET' && path === '/projects') {
-            // GET /projects - 사용자 프로젝트 목록
+        if (method === 'GET' && path === '/projects/projects') {
+            // GET /projects/projects - 사용자 프로젝트 목록
             const result = await getUserProjects(userId)
             return createSuccessResponse(result)
         }
 
-        if (method === 'GET' && path.startsWith('/projects/') && !path.includes('/repositories')) {
-            // GET /projects/:id - 프로젝트 상세 정보
-            const projectId = path.split('/')[2]
+        if (method === 'GET' && path.startsWith('/projects/projects/') && !path.includes('/repositories')) {
+            // GET /projects/projects/:id - 프로젝트 상세 정보
+            const projectId = path.split('/')[3]
             const result = await getProjectDetail(userId, projectId)
             return createSuccessResponse(result)
         }
 
         if (method === 'POST' && path.includes('/repositories') && !path.includes('/branches')) {
-            // POST /projects/:id/repositories - 저장소 연결
+            // POST /projects/projects/:id/repositories - 저장소 연결
             const pathParts = path.split('/')
-            const projectId = pathParts[2]
+            const projectId = pathParts[3]
             const body = await req.json()
             const result = await connectRepository(userId, projectId, body)
             return createSuccessResponse(result)
         }
 
         if (method === 'GET' && path.includes('/repositories/') && path.includes('/branches')) {
-            // GET /projects/:id/repositories/:repoId/branches - 프로젝트의 브랜치 목록
+            // GET /projects/projects/:id/repositories/:repoId/branches - 프로젝트의 브랜치 목록
             const pathParts = path.split('/')
-            const projectId = pathParts[2]
+            const projectId = pathParts[3]
             const result = await getRepositoryBranches(userId, projectId)
             return createSuccessResponse(result)
         }
 
         if (method === 'PATCH' && path.includes('/repositories/') && path.includes('/branch')) {
-            // PATCH /projects/:id/repositories/:repoId/branch - 선택된 브랜치 변경
+            // PATCH /projects/projects/:id/repositories/:repoId/branch - 선택된 브랜치 변경
             const pathParts = path.split('/')
-            const projectId = pathParts[2]
+            const projectId = pathParts[3]
             const body = await req.json()
             const result = await updateSelectedBranch(userId, projectId, body)
             return createSuccessResponse(result)
         }
 
         if (method === 'GET' && path.includes('/detail')) {
-            // GET /projects/:id/detail - 프로젝트 상세 정보 (기존 API와 동일)
+            // GET /projects/projects/:id/detail - 프로젝트 상세 정보 (기존 API와 동일)
             const pathParts = path.split('/')
-            const projectId = pathParts[2]
+            const projectId = pathParts[3]
             const result = await getProjectDetail(userId, projectId)
             return createSuccessResponse(result)
         }
 
         if (method === 'POST' && path.includes('/retry-codebuild')) {
-            // POST /projects/:id/retry-codebuild - CodeBuild 재시도
+            // POST /projects/projects/:id/retry-codebuild - CodeBuild 재시도
             const pathParts = path.split('/')
-            const projectId = pathParts[2]
+            const projectId = pathParts[3]
             const result = await retryCodeBuild(userId, projectId)
             return createSuccessResponse(result)
         }

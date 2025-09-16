@@ -37,11 +37,21 @@ async function getUserFromToken(authHeader: string) {
     }
 }
 
+// CORS 헤더 설정
+const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
+}
+
 // 에러 응답 생성
 function createErrorResponse(message: string, status: number = 400) {
     return new Response(JSON.stringify({ error: message }), {
         status,
-        headers: { 'Content-Type': 'application/json' }
+        headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders
+        }
     })
 }
 
@@ -49,7 +59,10 @@ function createErrorResponse(message: string, status: number = 400) {
 function createSuccessResponse(data: any, status: number = 200) {
     return new Response(JSON.stringify(data), {
         status,
-        headers: { 'Content-Type': 'application/json' }
+        headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders
+        }
     })
 }
 
