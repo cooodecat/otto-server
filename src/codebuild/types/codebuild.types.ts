@@ -7,7 +7,7 @@ import type {
  * 빌드 시작 응답 인터페이스
  *
  * AWS CodeBuild에서 빌드를 시작했을 때 반환되는 기본 정보를 정의합니다.
- * 빌드 ID, 상태, 프로젝트명, 시작 시간 등의 정보를 포함합니다.
+ * 빌드 ID, 상태, CodeBuild 프로젝트명, 시작 시간 등의 정보를 포함합니다.
  *
  * @since 1.0.0
  */
@@ -17,7 +17,7 @@ export interface BuildResponse {
   /** 현재 빌드 상태 (SUCCEEDED, FAILED, IN_PROGRESS 등) */
   buildStatus: string;
   /** AWS CodeBuild 프로젝트명 */
-  projectName: string;
+  codebuildProjectName: string;
   /** 빌드 시작 시간 (선택사항) */
   startTime?: Date;
 }
@@ -37,7 +37,7 @@ export interface BuildStatusResponse {
   /** 현재 빌드 상태 (SUCCEEDED, FAILED, IN_PROGRESS 등) */
   buildStatus: string;
   /** AWS CodeBuild 프로젝트명 */
-  projectName: string;
+  codebuildProjectName: string;
   /** 빌드 시작 시간 (선택사항) */
   startTime?: Date;
   /** 빌드 종료 시간 (완료된 경우에만) */

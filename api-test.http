@@ -78,3 +78,30 @@ Authorization: Bearer mock-jwt-token
 ### 5. 빌드 상태 조회 (인증 필요)
 GET http://localhost:4000/api/v1/codebuild/status/BUILD_ID_HERE
 Authorization: Bearer mock-jwt-token
+
+### 6. 로그 수집 시작 (CodeBuild ID 사용)
+POST http://localhost:4000/api/v1/logs/builds/otto-codebuild-project:fa21d195-132c-4721-bd14-f618c0044a83/start
+
+### 7. 로그 수집 시작 (Mock 테스트용)
+POST http://localhost:4000/api/v1/logs/builds/test-build-123/start?logGroup=test-logs&logStream=test-stream
+
+### 8. 빌드 로그 조회
+GET http://localhost:4000/api/v1/logs/builds/test-build-123
+
+### 9. 최근 로그 조회 (최대 50개)
+GET http://localhost:4000/api/v1/logs/builds/test-build-123/recent?limit=50
+
+### 10. 빌드 상태 확인
+GET http://localhost:4000/api/v1/logs/builds/test-build-123/status
+
+### 11. 활성 빌드 목록 조회
+GET http://localhost:4000/api/v1/logs/builds/active
+
+### 12. 로그 수집 중지
+POST http://localhost:4000/api/v1/logs/builds/test-build-123/stop
+
+### 13. CloudWatch Logs 테스트 (직접 API)
+GET http://localhost:4000/api/v1/cloudwatch-logs/test
+
+### 14. CloudWatch 실제 로그 조회
+GET http://localhost:4000/api/v1/cloudwatch-logs/raw?codebuildId=otto-codebuild-project:fa21d195-132c-4721-bd14-f618c0044a83
