@@ -4,9 +4,70 @@ import {
   CodeBuildClient,
   StartBuildCommand,
   BatchGetBuildsCommand,
+  CreateProjectCommand,
+  CreateProjectCommandOutput,
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
+
+/**
+ * buildspec.yml 입력 인터페이스
+ * JSON 형태의 빌드 설정을 정의하는 인터페이스
+ */
+export interface BuildSpecInput {
+  /** buildspec 버전 (기본값: '0.2') */
+  version?: string;
+  /** 런타임 환경 (예: 'node:18', 'python:3.9') */
+  runtime?: string;
+  /** 빌드 단계별 명령어 */
+  commands: {
+    /** 설치 단계 명령어 */
+    install?: string[];
+    /** 빌드 전 단계 명령어 */
+    pre_build?: string[];
+    /** 빌드 단계 명령어 */
+    build?: string[];
+    /** 빌드 후 단계 명령어 */
+    post_build?: string[];
+    /** 최종 단계 명령어 */
+    finally?: string[];
+  };
+  /** 빌드 아티팩트 파일 목록 */
+  artifacts?: string[];
+  /** 환경 변수 */
+  environment_variables?: Record<string, string>;
+  /** 캐시 설정 */
+  cache?: {
+    /** 캐시할 경로 목록 */
+    paths?: string[];
+  };
+  /** 테스트 리포트 설정 */
+  reports?: Record<
+    string,
+    {
+      /** 리포트 파일 목록 */
+      files: string[];
+      /** 파일 형식 */
+      'file-format'?:
+        | 'JUNITXML'
+        | 'CUCUMBERJSON'
+        | 'TESTNGXML'
+        | 'CLOVERXML'
+        | 'VISUALSTUDIOTRX'
+        | 'JACOCOXML'
+        | 'NUNITXML'
+        | 'NUNIT3XML';
+      /** 기본 디렉토리 */
+      'base-directory'?: string;
+      /** 경로 제거 여부 */
+      'discard-paths'?: boolean;
+    }
+  >;
+  /** 실패 시 동작 */
+  on_failure?: 'ABORT' | 'CONTINUE';
+  /** AWS Secrets Manager 시크릿 */
+  secrets?: Record<string, string>;
+}
 import {
   FlowPipelineInput,
   BlockTypeEnum,
@@ -205,7 +266,7 @@ export class CodeBuildService {
    * CodeBuildService 생성자
    *
    * AWS CodeBuild 클라이언트를 초기화합니다.
-   * 더 이상 고정된 프로젝트명을 사용하지 않고, 런타임에 동적으로 결정합니다.
+   * 더 이상 고정된 CodeBuild 프로젝트명을 사용하지 않고, 런타임에 동적으로 결정합니다.
    *
    * @param configService - 환경 설정 서비스
    * @param buildsService - 빌드 이력 관리 서비스
@@ -641,10 +702,10 @@ export class CodeBuildService {
    *
    * @param userId - 사용자 ID
    * @param projectId - 프로젝트 ID
-   * @param projectName - AWS CodeBuild 프로젝트명
+   * @param codebuildProjectName - AWS CodeBuild 프로젝트명
    * @param buildSpecOverride - buildspec.yml 내용 (YAML 문자열)
    * @param environmentVariables - 추가 환경변수 (선택사항)
-   * @returns 빌드 시작 결과 (빌드 ID, 상태, 프로젝트명, 시작시간)
+   * @returns 빌드 시작 결과 (빌드 ID, 상태, CodeBuild 프로젝트명, 시작시간)
    * @throws {Error} 빌드 시작에 실패한 경우
    *
    * @example
@@ -662,13 +723,13 @@ export class CodeBuildService {
   async startBuild(
     userId: string,
     projectId: string,
-    projectName: string,
+    codebuildProjectName: string,
     buildSpecOverride: string,
     environmentVariables?: Record<string, string>,
   ) {
     try {
       const command = new StartBuildCommand({
-        projectName: projectName,
+        projectName: codebuildProjectName,
         buildspecOverride: buildSpecOverride,
         environmentVariablesOverride: environmentVariables
           ? Object.entries(environmentVariables).map(([name, value]) => ({
@@ -701,13 +762,14 @@ export class CodeBuildService {
       }
 
       this.logger.log(
-        `Build started: ${response.build?.id} for project ${projectName} (user: ${userId})`,
+        `Build started: ${response.build?.id} for CodeBuild project ${codebuildProjectName} (user: ${userId})`,
       );
 
       return {
         buildId: response.build?.id || '',
         buildStatus: response.build?.buildStatus || '',
-        projectName: response.build?.projectName || '',
+        codebuildProjectName:
+          response.build?.projectName || codebuildProjectName,
         startTime: response.build?.startTime,
       };
     } catch (error) {
@@ -726,7 +788,7 @@ export class CodeBuildService {
    * 빌드 단계별 정보도 함께 저장합니다.
    *
    * @param buildId - AWS CodeBuild 빌드 ID
-   * @returns 빌드 상태 정보 (빌드 ID, 상태, 프로젝트명, 시간, 단계, 로그)
+   * @returns 빌드 상태 정보 (빌드 ID, 상태, CodeBuild 프로젝트명, 시간, 단계, 로그)
    * @throws {Error} 빌드를 찾을 수 없는 경우
    *
    * @example
@@ -779,7 +841,7 @@ export class CodeBuildService {
       return {
         buildId: build.id || '',
         buildStatus: build.buildStatus || '',
-        projectName: build.projectName || '',
+        codebuildProjectName: build.projectName || '',
         startTime: build.startTime,
         endTime: build.endTime,
         currentPhase: build.currentPhase,
@@ -797,13 +859,13 @@ export class CodeBuildService {
    *
    * FlowBlock 배열을 받아서 AWS CodeBuild buildspec.yml로 변환한 후 빌드를 시작합니다.
    * 이 메서드는 사용자 친화적인 블록 기반 형식을 AWS 표준 형식으로 변환합니다.
-   * 프로젝트명은 projectId를 기반으로 자동 생성됩니다.
+   * CodeBuild 프로젝트명은 projectId를 기반으로 자동 생성됩니다.
    *
    * @param userId - 사용자 ID
    * @param projectId - 프로젝트 ID
    * @param input - FlowBlock 기반 파이프라인 설정
    * @param environmentVariables - 추가 환경변수 (선택사항)
-   * @returns 빌드 시작 결과 (빌드 ID, 상태, 프로젝트명, 시작시간)
+   * @returns 빌드 시작 결과 (빌드 ID, 상태, CodeBuild 프로젝트명, 시작시간)
    * @throws {Error} 빌드 시작에 실패한 경우
    *
    * @example
@@ -851,13 +913,13 @@ export class CodeBuildService {
     );
 
     // projectId를 기반으로 AWS CodeBuild 프로젝트명 생성
-    const projectName = `otto-${userId}-${projectId}`;
+    const codebuildProjectName = `otto-${userId}-${projectId}`;
 
-    // 동적으로 생성된 프로젝트명으로 빌드 시작
+    // 동적으로 생성된 CodeBuild 프로젝트명으로 빌드 시작
     return this.startBuild(
       userId,
       projectId,
-      projectName,
+      codebuildProjectName,
       buildSpecYaml,
       environmentVariables,
     );
@@ -896,6 +958,145 @@ export class CodeBuildService {
       default:
         return 'pending';
     }
+  }
+
+  /**
+   * CodeBuild 프로젝트를 생성합니다
+   *
+   * 프로젝트 생성 시 자동으로 AWS CodeBuild 프로젝트를 생성합니다.
+   * 고정된 템플릿을 사용하여 일관된 설정으로 프로젝트를 생성합니다.
+   *
+   * @param userId - 사용자 ID
+   * @param projectName - 프로젝트 이름
+   * @param githubRepoUrl - GitHub 저장소 URL
+   * @param selectedBranch - 선택된 브랜치
+   * @returns CodeBuild 프로젝트 생성 결과
+   * @throws {Error} CodeBuild 프로젝트 생성에 실패한 경우
+   *
+   * @example
+   * ```typescript
+   * const result = await codeBuildService.createCodeBuildProject(
+   *   'user-123',
+   *   'my-project',
+   *   'https://github.com/user/repo',
+   *   'main'
+   * );
+   * console.log(result.projectName); // 'otto-my-project-user-123'
+   * ```
+   */
+  async createCodeBuildProject(
+    userId: string,
+    projectName: string,
+    githubRepoUrl: string,
+    selectedBranch: string,
+  ): Promise<{
+    projectName: string;
+    projectArn: string;
+    logGroupName: string;
+  }> {
+    try {
+      // 프로젝트명 정리 (특수문자 제거)
+      const sanitizedProjectName = projectName.replace(/[^a-zA-Z0-9-]/g, '-');
+      const codebuildProjectName = `otto-${sanitizedProjectName}-${userId}`;
+      const logGroupName = `otto-${sanitizedProjectName}-${userId}-cloudwatch`;
+      const artifactsName = `otto-${sanitizedProjectName}-${userId}-artifacts`;
+
+      // AWS 설정
+      const region =
+        this.configService.get<string>('AWS_REGION') || 'ap-northeast-2';
+      const codebuildServiceRole = this.configService.get<string>(
+        'AWS_CODEBUILD_SERVICE_ROLE',
+      );
+      const codebuildArtifactsBucket = this.configService.get<string>(
+        'CODEBUILD_ARTIFACTS_BUCKET',
+      );
+
+      if (!codebuildServiceRole || !codebuildArtifactsBucket) {
+        throw new Error(
+          'AWS CodeBuild 설정이 누락되었습니다: AWS_CODEBUILD_SERVICE_ROLE, CODEBUILD_ARTIFACTS_BUCKET',
+        );
+      }
+
+      // 기본 buildspec 생성
+      const buildspec = this.createDefaultBuildspec();
+
+      const createProjectCommand = new CreateProjectCommand({
+        name: codebuildProjectName,
+        source: {
+          type: 'GITHUB',
+          location: githubRepoUrl,
+          buildspec: buildspec,
+        },
+        sourceVersion: `refs/heads/${selectedBranch}`,
+        artifacts: {
+          type: 'S3',
+          location: codebuildArtifactsBucket,
+          name: artifactsName,
+          packaging: 'ZIP',
+        },
+        environment: {
+          type: 'LINUX_CONTAINER',
+          image: 'aws/codebuild/standard:7.0',
+          computeType: 'BUILD_GENERAL1_MEDIUM',
+        },
+        serviceRole: codebuildServiceRole,
+        timeoutInMinutes: 60,
+        logsConfig: {
+          cloudWatchLogs: {
+            status: 'ENABLED',
+            groupName: logGroupName,
+          },
+        },
+      });
+
+      const result = await this.codeBuildClient.send(createProjectCommand);
+
+      if (!result.project?.arn || !result.project?.name) {
+        throw new Error(
+          'CodeBuild 프로젝트 생성 실패: 프로젝트 정보가 누락되었습니다',
+        );
+      }
+
+      this.logger.log(
+        `CodeBuild 프로젝트 생성 완료: ${result.project.name} (ARN: ${result.project.arn})`,
+      );
+
+      return {
+        projectName: result.project.name,
+        projectArn: result.project.arn,
+        logGroupName,
+      };
+    } catch (error) {
+      this.logger.error(`CodeBuild 프로젝트 생성 실패: ${projectName}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 기본 buildspec.yml을 생성합니다
+   *
+   * @private
+   * @returns 기본 buildspec.yml 문자열
+   */
+  private createDefaultBuildspec(): string {
+    return `version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Installing dependencies...
+      - npm install || yarn install || echo "No package manager found"
+  build:
+    commands:
+      - echo Build started
+      - npm run build || yarn build || echo "No build script found"
+  post_build:
+    commands:
+      - echo Build completed
+artifacts:
+  files:
+    - '**/*'
+  base-directory: '.'
+`;
   }
 
   /**
