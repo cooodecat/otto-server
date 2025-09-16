@@ -2,6 +2,12 @@
 /dist
 /node_modules
 /build
+/.pnpm-store
+
+# TypeScript compiled files in src directory
+src/**/*.js
+src/**/*.js.map
+!src/**/*.spec.js
 
 # Logs
 logs

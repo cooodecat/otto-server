@@ -4,6 +4,9 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
+import { CodeBuildModule } from './codebuild/codebuild.module';
+import { BuildsModule } from './builds/builds.module';
+import { CloudWatchLogsModule } from './cloudwatch-logs/cloudwatch-logs.module';
 
 @Module({
   imports: [
@@ -30,6 +33,9 @@ import { AuthModule } from './auth/auth.module';
       },
     ]),
     AuthModule,
+    BuildsModule,
+    CodeBuildModule,
+    CloudWatchLogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
