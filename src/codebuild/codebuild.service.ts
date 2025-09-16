@@ -1049,9 +1049,7 @@ export class CodeBuildService {
         },
       });
 
-      const result = (await this.codeBuildClient.send(
-        createProjectCommand,
-      )) as CreateProjectCommandOutput;
+      const result = await this.codeBuildClient.send(createProjectCommand);
 
       if (!result.project?.arn || !result.project?.name) {
         throw new Error(
