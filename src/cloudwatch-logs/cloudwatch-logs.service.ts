@@ -46,17 +46,24 @@ export class CloudWatchLogsService {
     };
 
     this.logger.log(`AWS Config - Region: ${config.region}`);
-    this.logger.log(`AWS Config - AccessKeyId: ${config.accessKeyId?.substring(0, 10)}...`);
-    this.logger.log(`AWS Config - SecretAccessKey: ${config.secretAccessKey ? '***provided***' : 'undefined'}`);
-    this.logger.log(`AWS Config - SessionToken: ${config.sessionToken ? '***provided***' : 'undefined'}`);
+    this.logger.log(
+      `AWS Config - AccessKeyId: ${config.accessKeyId?.substring(0, 10)}...`,
+    );
+    this.logger.log(
+      `AWS Config - SecretAccessKey: ${config.secretAccessKey ? '***provided***' : 'undefined'}`,
+    );
+    this.logger.log(
+      `AWS Config - SessionToken: ${config.sessionToken ? '***provided***' : 'undefined'}`,
+    );
 
-    const credentials = config.accessKeyId && config.secretAccessKey 
-      ? { 
-          accessKeyId: config.accessKeyId, 
-          secretAccessKey: config.secretAccessKey,
-          sessionToken: config.sessionToken
-        }
-      : undefined;
+    const credentials =
+      config.accessKeyId && config.secretAccessKey
+        ? {
+            accessKeyId: config.accessKeyId,
+            secretAccessKey: config.secretAccessKey,
+            sessionToken: config.sessionToken,
+          }
+        : undefined;
 
     this.cloudWatchLogsClient = new CloudWatchLogsClient({
       region: config.region,
@@ -198,7 +205,9 @@ export class CloudWatchLogsService {
         nextToken,
         // Heuristic: more pages likely if we hit the page limit and token advanced.
         hasMore:
-          !!nextToken && nextToken !== prevToken && (response.events?.length || 0) >= pageLimit,
+          !!nextToken &&
+          nextToken !== prevToken &&
+          (response.events?.length || 0) >= pageLimit,
       };
     } catch (error) {
       this.logger.error(`Failed to fetch logs from CloudWatch:`, error);

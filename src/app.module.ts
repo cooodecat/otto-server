@@ -7,6 +7,8 @@ import { AuthModule } from './auth/auth.module';
 import { CodeBuildModule } from './codebuild/codebuild.module';
 import { BuildsModule } from './builds/builds.module';
 import { CloudWatchLogsModule } from './cloudwatch-logs/cloudwatch-logs.module';
+import { GithubIntegrationModule } from './github-integration/github-integration.module';
+import { ProjectsModule } from './projects/projects.module';
 
 @Module({
   imports: [
@@ -36,6 +38,8 @@ import { CloudWatchLogsModule } from './cloudwatch-logs/cloudwatch-logs.module';
     BuildsModule,
     CodeBuildModule,
     CloudWatchLogsModule,
+    GithubIntegrationModule,
+    ProjectsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
