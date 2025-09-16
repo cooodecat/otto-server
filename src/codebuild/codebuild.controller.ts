@@ -100,7 +100,7 @@ export class CodeBuildController {
    * {
    *   "buildId": "otto-user123-myapp:12345678-1234-1234-1234-123456789012",
    *   "buildStatus": "IN_PROGRESS",
-   *   "projectName": "otto-user123-myapp",
+   *   "codebuildProjectName": "otto-user123-myapp",
    *   "startTime": "2024-01-01T00:00:00Z",
    *   "currentPhase": "BUILD",
    *   "phases": [...],
@@ -156,7 +156,7 @@ export class CodeBuildController {
    * 4. 빌드 이력을 데이터베이스에 저장
    * 5. 빌드 ID 및 상태 반환
    *
-   * ## 프로젝트명 규칙
+   * ## CodeBuild 프로젝트명 규칙
    * AWS CodeBuild 프로젝트명은 `otto-{userId}-{projectId}` 형식으로 자동 생성됩니다.
    *
    * @method startFlowBuild
@@ -164,7 +164,7 @@ export class CodeBuildController {
    * @param {Request} req - 인증된 사용자 요청 객체 (JWT 토큰에서 사용자 정보 추출)
    * @param {string} projectId - 빌드를 실행할 프로젝트 ID
    * @param {FlowPipelineInput} flowPipelineInput - FlowBlock 기반 파이프라인 설정
-   * @returns {Promise<BuildResponse>} 빌드 시작 결과 (buildId, buildStatus, projectName, startTime)
+   * @returns {Promise<BuildResponse>} 빌드 시작 결과 (buildId, buildStatus, codebuildProjectName, startTime)
    *
    * @throws {HttpException} 404 - 프로젝트를 찾을 수 없거나 접근 권한이 없는 경우
    * @throws {HttpException} 400 - 잘못된 빌드 설정인 경우
@@ -226,7 +226,7 @@ export class CodeBuildController {
    * {
    *   "buildId": "otto-user123-proj_1234567890_abc123def:build-id-123",
    *   "buildStatus": "IN_PROGRESS",
-   *   "projectName": "otto-user123-proj_1234567890_abc123def",
+   *   "codebuildProjectName": "otto-user123-proj_1234567890_abc123def",
    *   "startTime": "2024-01-01T00:00:00Z"
    * }
    * ```
@@ -270,7 +270,7 @@ export class CodeBuildController {
       if (error.name === 'ResourceNotFoundException') {
         throw new HttpException(
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          `CodeBuild project not found: ${error.message}`,
+          `CodeBuild project not found for build: ${error.message}`,
           HttpStatus.NOT_FOUND,
         );
       }
