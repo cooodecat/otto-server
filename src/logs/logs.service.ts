@@ -142,9 +142,7 @@ export class LogsService implements OnModuleDestroy {
   /** SSE 이벤트 발생을 위한 LogsController 참조 */
   private logsController: any;
 
-  constructor(
-    private readonly cloudWatchLogsService: CloudWatchLogsService,
-  ) {}
+  constructor(private readonly cloudWatchLogsService: CloudWatchLogsService) {}
 
   /**
    * 특정 빌드에 대한 주기적 로그 수집을 시작합니다
@@ -184,8 +182,8 @@ export class LogsService implements OnModuleDestroy {
     this.buildLogs.set(buildId, buildLogData);
 
     // 주기적 로그 수집 시작 (5초마다)
-    const interval = setInterval(async () => {
-      await this.collectLogs(buildId);
+    const interval = setInterval(() => {
+      void this.collectLogs(buildId);
     }, this.POLL_INTERVAL);
 
     this.intervals.set(buildId, interval);
@@ -267,10 +265,13 @@ export class LogsService implements OnModuleDestroy {
       }
 
       // CloudWatch API를 사용하여 로그 수집
-      const result = await this.cloudWatchLogsService.getLogsPaginated(buildId, {
-        limit: 100, // 한 번에 최대 100개 로그 수집
-        nextToken: buildData.lastToken,
-      });
+      const result = await this.cloudWatchLogsService.getLogsPaginated(
+        buildId,
+        {
+          limit: 100, // 한 번에 최대 100개 로그 수집
+          nextToken: buildData.lastToken,
+        },
+      );
 
       if (result.logs.length > 0) {
         // RawLogEntry를 LogEvent로 변환
@@ -287,7 +288,9 @@ export class LogsService implements OnModuleDestroy {
         // 토큰 업데이트
         buildData.lastToken = result.nextToken;
 
-        this.logger.debug(`Collected ${result.logs.length} new log events for build: ${buildId}`);
+        this.logger.debug(
+          `Collected ${result.logs.length} new log events for build: ${buildId}`,
+        );
 
         // SSE로 새 로그를 프론트엔드에 전송
         this.notifyNewLogs(buildId, newLogEvents);
@@ -298,7 +301,6 @@ export class LogsService implements OnModuleDestroy {
       this.logger.error(`Error collecting logs for build ${buildId}:`, error);
     }
   }
-
 
   /**
    * 특정 빌드에 대한 모든 캐시된 로그 이벤트를 가져옵니다
@@ -397,10 +399,15 @@ export class LogsService implements OnModuleDestroy {
    * @private
    */
   private notifyNewLogs(buildId: string, newEvents: LogEvent[]): void {
-    this.logger.debug(`New logs available for build ${buildId}: ${newEvents.length} events`);
+    this.logger.debug(
+      `New logs available for build ${buildId}: ${newEvents.length} events`,
+    );
 
     // SSE를 통해 실시간으로 프론트엔드에 전송
-    if (this.logsController && typeof this.logsController.emitLogEvent === 'function') {
+    if (
+      this.logsController &&
+      typeof this.logsController.emitLogEvent === 'function'
+    ) {
       this.logsController.emitLogEvent(buildId, newEvents);
     }
   }
