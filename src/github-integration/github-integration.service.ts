@@ -298,5 +298,4 @@ export class GithubIntegrationService {
       );
     });
   }
-
 }

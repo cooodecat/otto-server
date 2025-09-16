@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Param, Query, Res, Sse, MessageEvent } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Query,
+  Res,
+  Sse,
+  MessageEvent,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { Observable, Subject } from 'rxjs';
 import { map, filter } from 'rxjs/operators';
@@ -109,7 +118,10 @@ export class LogsController {
 
   // 빌드 상태 확인
   @Get('builds/:buildId/status')
-  getBuildStatus(@Param('buildId') buildId: string): { buildId: string; isActive: boolean } {
+  getBuildStatus(@Param('buildId') buildId: string): {
+    buildId: string;
+    isActive: boolean;
+  } {
     return {
       buildId,
       isActive: this.logsService.isBuildActive(buildId),
@@ -178,7 +190,6 @@ export class LogsController {
       })),
     );
   }
-
 
   /**
    * Emits log events to all connected SSE clients

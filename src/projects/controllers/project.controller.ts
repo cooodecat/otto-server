@@ -31,7 +31,7 @@ import type {
 export class ProjectController {
   private readonly logger = new Logger(ProjectController.name);
 
-  constructor(private readonly projectService: ProjectService) { }
+  constructor(private readonly projectService: ProjectService) {}
 
   /**
    * @tag project
