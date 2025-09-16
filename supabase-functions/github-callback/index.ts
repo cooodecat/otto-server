@@ -8,76 +8,69 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_ANON_KEY') ?? '',
 );
 
-const FRONTEND_URL = Deno.env.get('FRONTEND_URL') ?? 'http://localhost:3000';
+const FRONTEND_URL = Deno.env.get('FRONTEND_URL') ?? 'http://localhost:3000'
 
-// CORS 헤더 설정
+// 모든 요청에 적용할 CORS
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
-};
-
-// 익명 접근을 위한 헤더
-const anonymousHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'content-type',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
 // GitHub 설치 콜백 처리
 async function handleGithubCallback(
   installationId: string,
-  setupAction: string,
   state: string,
-  accountLogin: string,
-  status: string,
 ) {
-  const callbackPath = '/integrations/github/callback';
+  const callbackPath = '/projects'; // 리다이렉트 최종 위치
 
+  if (!state) {
+    return { url: `${FRONTEND_URL}${callbackPath}?status=error&reason=missing_state`, statusCode: 302 };
+  }
+
+  let userId;
   try {
-    console.log('[GitHub Callback] Processing:', {
-      installationId,
-      setupAction,
-      state: state ? `${state.substring(0, 20)}...` : 'null',
-      accountLogin,
-      status,
-    });
+    const decodedState = JSON.parse(atob(state));
+    userId = decodedState.userId;
+  } catch {
+    return { url: `${FRONTEND_URL}${callbackPath}?status=error&reason=invalid_state`, statusCode: 302 };
+  }
 
-    // 1) state 검증 및 사용자 식별
-    if (!state) {
-      console.log('[GitHub Callback] Error: Missing state parameter');
-      return {
-        url: `${FRONTEND_URL}${callbackPath}?status=error&reason=missing_state`,
-        statusCode: 302,
-      };
-    }
+  if (!installationId) {
+    return { url: `${FRONTEND_URL}${callbackPath}?status=error&reason=missing_installation_id`, statusCode: 302 };
+  }
 
-    let userId;
-    try {
-      const decodedState = JSON.parse(atob(state));
-      userId = decodedState.userId;
-    } catch {
-      console.log('[GitHub Callback] Error: Invalid state token');
-      return {
-        url: `${FRONTEND_URL}${callbackPath}?status=error&reason=invalid_state`,
-        statusCode: 302,
-      };
-    }
+  // 먼저 기존 설치가 있는지 확인
+  const { data: existingInstallation } = await supabase
+    .from('github_installations')
+    .select('*')
+    .eq('github_installation_id', installationId)
+    .single();
 
-    console.log('[GitHub Callback] State verified for user:', userId);
+  let installation;
+  let error;
 
-    // 2) installation_id 유효성 확인
-    if (!installationId) {
-      console.log('[GitHub Callback] Error: Missing installation_id');
-      return {
-        url: `${FRONTEND_URL}${callbackPath}?status=error&reason=missing_installation_id`,
-        statusCode: 302,
-      };
-    }
+  if (existingInstallation) {
+    // 기존 설치가 있으면 업데이트
+    const { data, error: updateError } = await supabase
+      .from('github_installations')
+      .update({
+        user_id: userId,
+        account_id: 'unknown',
+        account_login: 'unknown',
+        account_type: 'Organization',
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('github_installation_id', installationId)
+      .select()
+      .single();
 
-    // 3) GitHub Installation 등록
-    const { data: installation, error: installError } = await supabase
+    installation = data;
+    error = updateError;
+  } else {
+    // 새 설치 생성
+    const { data, error: insertError } = await supabase
       .from('github_installations')
       .insert({
         installation_id: installationId,
@@ -87,136 +80,58 @@ async function handleGithubCallback(
         account_login: 'unknown',
         account_type: 'Organization',
         is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .select()
       .single();
 
-    if (installError) {
-      console.error(
-        '[GitHub Callback] Installation registration failed:',
-        installError,
-      );
-      return {
-        url: `${FRONTEND_URL}${callbackPath}?status=error&reason=installation_failed`,
-        statusCode: 302,
-      };
-    }
-
-    console.log(
-      '[GitHub Callback] Installation registered successfully:',
-      installation,
-    );
-
-    // 4) 성공 리다이렉트
-    const successUrl = `${FRONTEND_URL}${callbackPath}?status=success&installation_id=${encodeURIComponent(
-      installationId,
-    )}&account_login=${encodeURIComponent(installation.account_login || '')}`;
-
-    console.log('[GitHub Callback] Redirecting to:', successUrl);
-
-    return {
-      url: successUrl,
-      statusCode: 302,
-    };
-  } catch (error) {
-    console.error('[GitHub Callback] Error:', error);
-
-    let reason = 'installation_failed';
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error';
-    if (errorMessage.includes('유효하지 않은')) {
-      reason = 'invalid_installation';
-    } else if (errorMessage.includes('권한')) {
-      reason = 'permission_denied';
-    }
-
-    return {
-      url: `${FRONTEND_URL}${callbackPath}?status=error&reason=${reason}`,
-      statusCode: 302,
-    };
+    installation = data;
+    error = insertError;
   }
+
+  if (error) {
+    console.error('Database error:', error);
+    return { url: `${FRONTEND_URL}${callbackPath}?status=error&reason=installation_failed`, statusCode: 302 };
+  }
+
+  return {
+    url: `${FRONTEND_URL}${callbackPath}?status=success&installation_id=${encodeURIComponent(
+      installationId,
+    )}&account_login=${encodeURIComponent(installation?.account_login || '')}`,
+    statusCode: 302,
+  };
 }
 
 serve(async (req) => {
-  try {
-    const url = new URL(req.url);
-    const method = req.method;
-    const path = url.pathname;
+  const url = new URL(req.url);
+  const method = req.method;
+  const path = url.pathname;
 
-    console.log('[GitHub Callback] Request received:', {
-      method,
-      path,
-      fullUrl: req.url,
-    });
+  // OPTIONS preflight
+  if (method === 'OPTIONS') {
+    return new Response(null, { status: 200, headers: corsHeaders });
+  }
 
-    // CORS preflight 처리
-    if (method === 'OPTIONS') {
-      return new Response(null, {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        }
-      });
-    }
+  // GitHub 콜백 처리
+  if (method === 'GET' && path === '/github-callback') {
+    const installationId = url.searchParams.get('installation_id') || '';
+    const state = url.searchParams.get('state') || '';
 
-    // GitHub 콜백 처리 (JWT 검증 활성화)
-    if (method === 'GET' && path === '/github-callback') {
-      const installationId = url.searchParams.get('installation_id') || '';
-      const setupAction = url.searchParams.get('setup_action') || '';
-      const state = url.searchParams.get('state') || '';
-      const accountLogin = url.searchParams.get('account_login') || '';
-      const status = url.searchParams.get('status') || '';
+    const result = await handleGithubCallback(installationId, state);
 
-      console.log('[GitHub Callback] Received parameters:', {
-        installationId,
-        setupAction,
-        state: state ? `${state.substring(0, 20)}...` : 'null',
-        accountLogin,
-        status,
-      });
-
-      const result = await handleGithubCallback(
-        installationId,
-        setupAction,
-        state,
-        accountLogin,
-        status,
-      );
-
-      return new Response(null, {
-        status: result.statusCode,
-        headers: {
-          Location: result.url,
-          ...anonymousHeaders,
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        },
-      });
-    }
-
-    // 다른 경로는 404
-    return new Response(JSON.stringify({ error: 'Not Found' }), {
-      status: 404,
+    return new Response(null, {
+      status: result.statusCode,
       headers: {
-        'Content-Type': 'application/json',
-        ...corsHeaders,
-      },
-    });
-  } catch (error) {
-    console.error('[GitHub Callback] Function error:', error);
-    const errorMessage =
-      error instanceof Error ? error.message : 'Internal Server Error';
-
-    return new Response(JSON.stringify({ error: errorMessage }), {
-      status: 500,
-      headers: {
-        'Content-Type': 'application/json',
+        Location: result.url,
         ...corsHeaders,
       },
     });
   }
+
+  // 기타 요청 404
+  return new Response(JSON.stringify({ error: 'Not Found' }), {
+    status: 404,
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
 });
