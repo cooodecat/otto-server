@@ -205,7 +205,7 @@ export class CodeBuildService {
    * CodeBuildService 생성자
    *
    * AWS CodeBuild 클라이언트를 초기화합니다.
-   * 더 이상 고정된 프로젝트명을 사용하지 않고, 런타임에 동적으로 결정합니다.
+   * 더 이상 고정된 CodeBuild 프로젝트명을 사용하지 않고, 런타임에 동적으로 결정합니다.
    *
    * @param configService - 환경 설정 서비스
    * @param buildsService - 빌드 이력 관리 서비스
@@ -641,10 +641,10 @@ export class CodeBuildService {
    *
    * @param userId - 사용자 ID
    * @param projectId - 프로젝트 ID
-   * @param projectName - AWS CodeBuild 프로젝트명
+   * @param codebuildProjectName - AWS CodeBuild 프로젝트명
    * @param buildSpecOverride - buildspec.yml 내용 (YAML 문자열)
    * @param environmentVariables - 추가 환경변수 (선택사항)
-   * @returns 빌드 시작 결과 (빌드 ID, 상태, 프로젝트명, 시작시간)
+   * @returns 빌드 시작 결과 (빌드 ID, 상태, CodeBuild 프로젝트명, 시작시간)
    * @throws {Error} 빌드 시작에 실패한 경우
    *
    * @example
@@ -662,13 +662,13 @@ export class CodeBuildService {
   async startBuild(
     userId: string,
     projectId: string,
-    projectName: string,
+    codebuildProjectName: string,
     buildSpecOverride: string,
     environmentVariables?: Record<string, string>,
   ) {
     try {
       const command = new StartBuildCommand({
-        projectName: projectName,
+        projectName: codebuildProjectName,
         buildspecOverride: buildSpecOverride,
         environmentVariablesOverride: environmentVariables
           ? Object.entries(environmentVariables).map(([name, value]) => ({
@@ -701,13 +701,14 @@ export class CodeBuildService {
       }
 
       this.logger.log(
-        `Build started: ${response.build?.id} for project ${projectName} (user: ${userId})`,
+        `Build started: ${response.build?.id} for CodeBuild project ${codebuildProjectName} (user: ${userId})`,
       );
 
       return {
         buildId: response.build?.id || '',
         buildStatus: response.build?.buildStatus || '',
-        projectName: response.build?.projectName || '',
+        codebuildProjectName:
+          response.build?.projectName || codebuildProjectName,
         startTime: response.build?.startTime,
       };
     } catch (error) {
@@ -726,7 +727,7 @@ export class CodeBuildService {
    * 빌드 단계별 정보도 함께 저장합니다.
    *
    * @param buildId - AWS CodeBuild 빌드 ID
-   * @returns 빌드 상태 정보 (빌드 ID, 상태, 프로젝트명, 시간, 단계, 로그)
+   * @returns 빌드 상태 정보 (빌드 ID, 상태, CodeBuild 프로젝트명, 시간, 단계, 로그)
    * @throws {Error} 빌드를 찾을 수 없는 경우
    *
    * @example
@@ -779,7 +780,7 @@ export class CodeBuildService {
       return {
         buildId: build.id || '',
         buildStatus: build.buildStatus || '',
-        projectName: build.projectName || '',
+        codebuildProjectName: build.projectName || '',
         startTime: build.startTime,
         endTime: build.endTime,
         currentPhase: build.currentPhase,
@@ -797,13 +798,13 @@ export class CodeBuildService {
    *
    * FlowBlock 배열을 받아서 AWS CodeBuild buildspec.yml로 변환한 후 빌드를 시작합니다.
    * 이 메서드는 사용자 친화적인 블록 기반 형식을 AWS 표준 형식으로 변환합니다.
-   * 프로젝트명은 projectId를 기반으로 자동 생성됩니다.
+   * CodeBuild 프로젝트명은 projectId를 기반으로 자동 생성됩니다.
    *
    * @param userId - 사용자 ID
    * @param projectId - 프로젝트 ID
    * @param input - FlowBlock 기반 파이프라인 설정
    * @param environmentVariables - 추가 환경변수 (선택사항)
-   * @returns 빌드 시작 결과 (빌드 ID, 상태, 프로젝트명, 시작시간)
+   * @returns 빌드 시작 결과 (빌드 ID, 상태, CodeBuild 프로젝트명, 시작시간)
    * @throws {Error} 빌드 시작에 실패한 경우
    *
    * @example
@@ -851,13 +852,13 @@ export class CodeBuildService {
     );
 
     // projectId를 기반으로 AWS CodeBuild 프로젝트명 생성
-    const projectName = `otto-${userId}-${projectId}`;
+    const codebuildProjectName = `otto-${userId}-${projectId}`;
 
-    // 동적으로 생성된 프로젝트명으로 빌드 시작
+    // 동적으로 생성된 CodeBuild 프로젝트명으로 빌드 시작
     return this.startBuild(
       userId,
       projectId,
-      projectName,
+      codebuildProjectName,
       buildSpecYaml,
       environmentVariables,
     );
