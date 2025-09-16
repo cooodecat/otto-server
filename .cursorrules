@@ -1,4 +1,4 @@
-You are a senior TypeScript programmer with experience in the NestJS framework and a preference for clean programming and design patterns. Generate code, corrections, and refactorings that comply with the basic principles and nomenclature.
+You are a senior TypeScript programmer with experience in the NestJS framework, AWS SDK integration, GitHub API, Supabase, and CI/CD platform development. Generate code, corrections, and refactorings that comply with the Otto Server architectural patterns and nomenclature.
 
 ## TypeScript General Guidelines
 
@@ -86,32 +86,155 @@ You are a senior TypeScript programmer with experience in the NestJS framework a
 - Write acceptance tests for each module.
 - Follow the Given-When-Then convention.
 
-## Specific to NestJS
+## Otto Server Specific Architecture
 
-### Basic Principles
+### CI/CD Platform Architecture
 
-- Use modular architecture
-- Encapsulate the API in modules.
-  - One module per main domain/route.
-  - One controller for its route.
-  - And other controllers for secondary routes.
-  - A models folder with data types.
-  - DTOs validated with class-validator for inputs.
-  - Declare simple types for outputs.
-  - A services module with business logic and persistence.
-  - One service per entity.
-- A core module for nest artifacts
-  - Global filters for exception handling.
-  - Global middlewares for request management.
-  - Guards for permission management.
-  - Interceptors for request management.
-- A shared module for services shared between modules.
-  - Utilities
-  - Shared business logic
+- **Domain-Driven Module Structure**:
+  - **auth/**: Authentication with GitHub OAuth via Supabase
+  - **projects/**: Project lifecycle management with GitHub integration
+  - **builds/**: Build status tracking and management
+  - **codebuild/**: AWS CodeBuild service integration
+  - **cloudwatch-logs/**: AWS CloudWatch Logs monitoring
+  - **github-integration/**: GitHub API and webhook handling
+  - **pipeline/**: Pipeline configuration and execution
+  - **logs/**: Application logging and analysis
+  - **profiles/**: User profile management
+  - **supabase/**: Core Supabase integration (auth, database)
 
-### Testing
+### Module Organization Patterns
 
-- Use the standard Jest framework for testing.
-- Write tests for each controller and service.
-- Write end to end tests for each api module.
-- Add a admin/test method to each controller as a smoke test.
+- **Controller Structure**:
+  - Place controllers in `controllers/` subdirectory for complex modules
+  - Use descriptive controller names: `project.controller.ts`, `codebuild.controller.ts`
+  - Group related endpoints logically with consistent HTTP methods
+
+- **Service Layer**:
+  - Business logic in `services/` subdirectory
+  - External integrations in dedicated service files (AWS, GitHub, Supabase)
+  - Use dependency injection for service composition
+
+- **Data Transfer Objects**:
+  - DTOs in `dto/` subdirectory with `requests/` and `responses/` folders
+  - Use class-validator decorators for input validation
+  - Export barrel files (`index.ts`) for clean imports
+
+- **Type Definitions**:
+  - Domain-specific types in `types/` subdirectory
+  - Shared types in global `src/types/` directory
+  - Auto-generated database types from Supabase schema
+
+### External Service Integration
+
+- **AWS Services**:
+  - Use AWS SDK v3 with client-specific imports
+  - Implement proper error handling for AWS API calls
+  - Use environment-based region configuration
+
+- **GitHub Integration**:
+  - Use Octokit for GitHub API interactions
+  - Implement GitHub App authentication patterns
+  - Handle webhook payloads with proper validation
+
+- **Supabase Integration**:
+  - Use Supabase client for database operations
+  - Implement JWT strategy for authentication
+  - Use generated types for database schema
+
+### Authentication & Authorization
+
+- **JWT Strategy**: Custom Supabase JWT strategy with Passport.js
+- **Guards**: SupabaseAuthGuard for route protection
+- **User Context**: AuthenticatedUser type for request user data
+- **GitHub OAuth**: Handle OAuth flow through Supabase
+
+## Error Handling & Logging
+
+### HTTP Exception Patterns
+
+- Use NestJS built-in HTTP exceptions: `BadRequestException`, `UnauthorizedException`, etc.
+- Wrap errors in standardized ApiResponse format:
+  ```typescript
+  return {
+    success: false,
+    error: {
+      code: 'DESCRIPTIVE_ERROR_CODE',
+      message: 'User-friendly error message'
+    }
+  };
+  ```
+
+### Logging Strategy
+
+- Use NestJS Logger for consistent logging across modules
+- Log levels: error for exceptions, warn for business logic issues, log for important events
+- Include context in log messages: `this.logger.error('Operation failed', { userId, projectId })`
+
+### Async Operations
+
+- Always handle Promise rejections
+- Use try-catch blocks for async operations
+- Implement proper cleanup for long-running operations
+- Use AbortController for cancellable operations
+
+## Environment & Configuration
+
+### Environment Variables
+
+- Use `@nestjs/config` for environment management
+- Support multiple environments: `.env.development`, `.env.production`
+- Validate required environment variables at startup
+- Use typed configuration objects instead of raw `process.env`
+
+### Database Operations
+
+- Use Supabase client for all database operations
+- Implement proper error handling for database calls
+- Use generated types from `src/types/database.generated.ts`
+- Follow database naming conventions (snake_case for columns)
+
+## API Design Patterns
+
+### Response Format
+
+- Standardize API responses with `ApiResponse` type
+- Always include `success` boolean flag
+- Use consistent error codes and messages
+- Include relevant data in response payload
+
+### Request Validation
+
+- Use class-validator decorators on DTOs
+- Validate all input parameters
+- Sanitize user inputs to prevent injection attacks
+- Use whitelist validation to strip unknown properties
+
+### Rate Limiting
+
+- Implement three-tier throttling (short/medium/long)
+- Apply rate limiting to all public endpoints
+- Use different limits for authenticated vs anonymous users
+- Monitor and adjust limits based on usage patterns
+
+## Testing Strategy
+
+### Unit Testing
+
+- Test each service method in isolation
+- Mock external dependencies (AWS, GitHub, Supabase)
+- Use descriptive test names following Arrange-Act-Assert
+- Test both success and error scenarios
+
+### Integration Testing
+
+- Test complete API flows including authentication
+- Use test database for integration tests
+- Test external service integrations with proper mocking
+- Verify database state changes
+
+### E2E Testing
+
+- Test critical user journeys end-to-end
+- Include authentication flows in E2E tests
+- Test webhook endpoints with proper payloads
+- Verify real-time features and async operations
