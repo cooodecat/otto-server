@@ -79,10 +79,8 @@ export class LogsController {
   @Post('builds/:buildId/start')
   async startLogCollection(
     @Param('buildId') buildId: string,
-    @Query('logGroup') logGroupName?: string,
-    @Query('logStream') logStreamName?: string,
   ): Promise<{ message: string }> {
-    await this.logsService.startLogCollection(buildId, logGroupName, logStreamName);
+    await this.logsService.startLogCollection(buildId);
     return { message: `Log collection started for build: ${buildId}` };
   }
 

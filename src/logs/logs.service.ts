@@ -1,5 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
-import { LogsMockService } from './logs.mock.service';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { CloudWatchLogsService } from '../cloudwatch-logs/cloudwatch-logs.service';
 import { RawLogEntry } from '../cloudwatch-logs/types/cloudwatch.types';
 
@@ -68,7 +67,7 @@ interface BuildLogData {
  * - **주기적 수집**: CloudWatch Logs API에서 5초마다 새로운 로그 이벤트 수집
  * - **로그 캐싱**: 설정 가능한 크기 제한으로 메모리에 로그 캐시 (빌드당 1000개 엔트리)
  * - **실시간 스트리밍**: Server-Sent Events(SSE)를 통해 프론트엔드 클라이언트에 실시간 로그 전송
- * - **오류 처리**: Mock 서비스로 자동 폴백하는 우아한 오류 처리
+ * - **오류 처리**: 포괄적인 오류 로깅 및 처리
  * - **리소스 관리**: 적절한 정리 및 메모리 관리를 통한 효율적인 리소스 관리
  *
  * ## 주요 기능
@@ -89,13 +88,12 @@ interface BuildLogData {
  * - 효율적인 이벤트 배포를 위한 RxJS Observable 패턴 사용
  *
  * ### 🛡️ 오류 복원력
- * - 개발 중 Mock 서비스로 우아한 폴백
  * - 서비스 중단 없는 포괄적인 오류 로깅
  * - CloudWatch 서비스 통합을 통한 자동 재시도 로직
  *
  * ## 사용 예시
  *
- * ### 기본 사용법 (운영환경)
+ * ### 기본 사용법
  * ```typescript
  * // CodeBuild 로그 수집 시작
  * await logsService.startLogCollection('otto-codebuild-project:fa21d195-132c-4721-bd14-f618c0044a83');
@@ -105,12 +103,6 @@ interface BuildLogData {
  *
  * // 빌드 완료 시 수집 중지
  * logsService.stopLogCollection('otto-codebuild-project:fa21d195-132c-4721-bd14-f618c0044a83');
- * ```
- *
- * ### 개발환경 사용법 (Mock)
- * ```typescript
- * // 개발 테스트를 위한 Mock 서비스 사용
- * await logsService.startLogCollection('test-build-123', 'mock-log-group', 'mock-stream');
  * ```
  *
  * ### 프론트엔드 통합
@@ -130,12 +122,10 @@ interface BuildLogData {
  *                              ↓              ↓              ↑
  *                         Memory Cache → SSE Stream ──────────┘
  *                              ↓
- *                         Mock Service (fallback)
  * ```
  *
  * @see CloudWatchLogsService 직접적인 CloudWatch API 접근을 위해
  * @see LogsController REST API 및 SSE 엔드포인트를 위해
- * @see LogsMockService 개발용 폴백 기능을 위해
  */
 @Injectable()
 export class LogsService implements OnModuleDestroy {
@@ -153,7 +143,6 @@ export class LogsService implements OnModuleDestroy {
   private logsController: any;
 
   constructor(
-    private readonly logsMockService: LogsMockService,
     private readonly cloudWatchLogsService: CloudWatchLogsService,
   ) {}
 
@@ -179,7 +168,7 @@ export class LogsService implements OnModuleDestroy {
    *
    * @throws CodeBuild를 찾을 수 없거나 로그 접근에 실패할 경우 오류를 로깅합니다
    */
-  async startLogCollection(buildId: string, logGroupName?: string, logStreamName?: string): Promise<void> {
+  async startLogCollection(buildId: string): Promise<void> {
     this.logger.log(`Starting log collection for build: ${buildId}`);
 
     // 기존 수집이 있다면 중지
@@ -188,7 +177,7 @@ export class LogsService implements OnModuleDestroy {
     // 빌드 로그 데이터 초기화
     const buildLogData: BuildLogData = {
       buildId,
-      logStreamName: logStreamName || 'auto-resolved', // CloudWatch API가 자동으로 해결
+      logStreamName: 'auto-resolved', // CloudWatch API가 자동으로 해결
       logs: [],
       isActive: true,
     };
@@ -196,13 +185,13 @@ export class LogsService implements OnModuleDestroy {
 
     // 주기적 로그 수집 시작 (5초마다)
     const interval = setInterval(async () => {
-      await this.collectLogs(buildId, logGroupName, logStreamName);
+      await this.collectLogs(buildId);
     }, this.POLL_INTERVAL);
 
     this.intervals.set(buildId, interval);
 
     // 초기 로그 수집 (즉시 실행)
-    await this.collectLogs(buildId, logGroupName, logStreamName);
+    await this.collectLogs(buildId);
   }
 
   /**
@@ -270,21 +259,14 @@ export class LogsService implements OnModuleDestroy {
    * @throws 오류를 로깅하지만 서비스 안정성을 위해 예외를 던지지 않습니다
    * @private
    */
-  private async collectLogs(buildId: string, logGroupName?: string, logStreamName?: string): Promise<void> {
+  private async collectLogs(buildId: string): Promise<void> {
     try {
       const buildData = this.buildLogs.get(buildId);
       if (!buildData || !buildData.isActive) {
         return;
       }
 
-      // 개발환경에서는 Mock 서비스를 우선 사용
-      if (process.env.NODE_ENV === 'development') {
-        this.logger.debug(`Using mock service for development environment: ${buildId}`);
-        await this.collectLogsFromMock(buildId, logGroupName, logStreamName);
-        return;
-      }
-
-      // 운영환경에서만 CloudWatch API 사용
+      // CloudWatch API를 사용하여 로그 수집
       const result = await this.cloudWatchLogsService.getLogsPaginated(buildId, {
         limit: 100, // 한 번에 최대 100개 로그 수집
         nextToken: buildData.lastToken,
@@ -314,93 +296,9 @@ export class LogsService implements OnModuleDestroy {
       }
     } catch (error) {
       this.logger.error(`Error collecting logs for build ${buildId}:`, error);
-
-      // CloudWatch API 호출 실패 시 fallback으로 mock 서비스 사용
-      this.logger.warn(`Falling back to mock service for build: ${buildId}`);
-      await this.collectLogsFromMock(buildId, logGroupName, logStreamName);
     }
   }
 
-  /**
-   * Mock 서비스를 사용한 로그 수집을 위한 폴백 메소드
-   *
-   * CloudWatch API 호출이 실패할 때 자동으로 호출되는 메소드로,
-   * 개발 중이거나 AWS 서비스를 사용할 수 없을 때 Mock 데이터로
-   * 원활한 폴백을 제공합니다. 기본 CloudWatch 수집 메소드와
-   * 동일한 인터페이스와 동작을 유지합니다.
-   *
-   * @param buildId - 빌드의 고유 식별자
-   * @param logGroupName - CloudWatch 로그 그룹 이름 (선택사항, 기본값: 'mock-log-group')
-   * @param logStreamName - CloudWatch 로그 스트림 이름 (선택사항, 기본값: 'mock-log-stream')
-   *
-   * @example
-   * ```typescript
-   * // CloudWatch API 실패 시 자동으로 호출됨
-   *
-   *  try {
-   *   await this.cloudWatchLㄴogsService.getLogsPaginated(buildId, options);
-   * } catch (error) {
-   *   if (process.env.NODE_ENV === 'development') {
-   *     await this.collectLogsFromMock(buildId, logGroupName, logStreamName);
-   *   }
-   * }
-   * ```
-   *
-   * @throws 서비스 안정성을 위해 오류를 로깅하지만 예외를 던지지 않습니다
-   * @private
-   */
-  private async collectLogsFromMock(buildId: string, logGroupName?: string, logStreamName?: string): Promise<void> {
-    try {
-      const buildData = this.buildLogs.get(buildId);
-      if (!buildData || !buildData.isActive) {
-        return;
-      }
-
-      // Mock 서비스에서는 logGroup과 logStream이 필요하므로 기본값 설정
-      const mockLogGroup = logGroupName || 'mock-log-group';
-      const mockLogStream = logStreamName || 'mock-log-stream';
-
-      // 권한 및 로그 스트림 유효성 검사
-      const hasPermission = await this.logsMockService.checkPermissions(mockLogGroup);
-      if (!hasPermission) {
-        this.logger.error(`No permission to access log group: ${mockLogGroup}`);
-        return;
-      }
-
-      const isValidStream = await this.logsMockService.validateLogStream(mockLogGroup, mockLogStream);
-      if (!isValidStream) {
-        this.logger.error(`Invalid log stream: ${mockLogStream}`);
-        return;
-      }
-
-      // Mock 서비스에서 로그 이벤트 가져오기
-      const response = await this.logsMockService.getLogEvents(
-        mockLogGroup,
-        mockLogStream,
-        buildData.lastToken,
-      );
-
-      if (response.events.length > 0) {
-        // 새 로그를 캐시에 추가
-        buildData.logs.push(...response.events);
-
-        // 캐시 크기 제한
-        if (buildData.logs.length > this.MAX_CACHED_LOGS) {
-          buildData.logs = buildData.logs.slice(-this.MAX_CACHED_LOGS);
-        }
-
-        // 토큰 업데이트
-        buildData.lastToken = response.nextForwardToken;
-
-        this.logger.debug(`[MOCK] Collected ${response.events.length} new log events for build: ${buildId}`);
-
-        // SSE로 새 로그를 프론트엔드에 전송
-        this.notifyNewLogs(buildId, response.events);
-      }
-    } catch (error) {
-      this.logger.error(`Error collecting logs from mock service for build ${buildId}:`, error);
-    }
-  }
 
   /**
    * 특정 빌드에 대한 모든 캐시된 로그 이벤트를 가져옵니다
