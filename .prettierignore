@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+build/
+
+# Test coverage
+coverage/
+
+# Environment files
+.env*
+
+# Auto-generated files
+*.generated.ts
+src/types/database.generated.ts
+src/types/database.types.ts
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

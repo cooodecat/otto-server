@@ -1,0 +1,157 @@
+// 참고용 스키마 파일입니다 (Prisma Client로 사용하지 않습니다)
+// Supabase에서 생성한 테이블 구조를 기준으로 작성했습니다
+// 테이블 간 관계 및 주요 필드를 문서용으로 정리한 파일입니다
+
+// ENUM 예시 (실제 Supabase Enum과 일치해야 함)
+enum LogLevel {
+    DEBUG
+    INFO
+    WARN
+    ERROR
+}
+
+enum CollectionStatus {
+    ACTIVE
+    STOPPED
+    ERROR
+}
+
+// 빌드 기록 (CodeBuild 단위)
+model build_histories {
+    id                     String    @id @default(uuid()) // 기본 키 (UUID)
+    user_id                String // Supabase auth.users 참조
+    project_id             String // projects 참조
+    aws_build_id           String    @unique // AWS Build ID
+    build_execution_status String // 빌드 상태
+    build_spec             Json // buildspec 내용 (jsonb)
+    environment_variables  Json? // 환경변수 (jsonb)
+    start_time             DateTime? @db.Timestamptz // 빌드 시작 시간
+    end_time               DateTime? @db.Timestamptz // 빌드 종료 시간
+    duration_seconds       Int? // 실행 시간(초)
+    logs_url               String? // CloudWatch Logs URL
+    build_error_message    String? // 에러 메시지 (실패 시)
+    created_at             DateTime? @default(now()) @db.Timestamptz
+    updated_at             DateTime? @default(now()) @db.Timestamptz
+}
+
+// 빌드 실행 단계 (INSTALL/BUILD/FINALIZE 등)
+model build_execution_phases {
+    id                     String    @id @default(uuid())
+    build_history_id       String // build_histories 참조
+    phase_type             String // 예: INSTALL
+    phase_status           String // 예: SUCCEEDED
+    phase_start_time       DateTime? @db.Timestamptz
+    phase_end_time         DateTime? @db.Timestamptz
+    phase_duration_seconds Int?
+    phase_context_message  String?
+    created_at             DateTime? @default(now()) @db.Timestamptz
+}
+
+// 실행 로그 (CloudWatch에서 수집된 각 로그 이벤트)
+model job_execution_logs {
+    id           String   @id @default(uuid())
+    execution_id String   @unique // 내부 실행 ID
+    event_id     String   @unique // CloudWatch 이벤트 ID
+    timestamp    DateTime @db.Timestamptz
+    phase        String?
+    state        String?
+    level        LogLevel // 로그 레벨
+    message      String
+    log_stream   String?
+    raw_data     Json? // 원본 이벤트 JSON
+    created_at   DateTime @default(now()) @db.Timestamptz
+}
+
+// 로그 실행 단위 (Job Execution 단위, CodeBuild 빌드 단위와 유사)
+model job_executions {
+    id           String    @id @default(uuid())
+    execution_id String    @unique
+    provider     String // 예: codebuild
+    external_id  String    @unique // AWS Build ID
+    project_name String
+    status       String?
+    started_at   DateTime  @db.Timestamptz
+    ended_at     DateTime? @db.Timestamptz
+    created_at   DateTime  @default(now()) @db.Timestamptz
+}
+
+// 로그 수집 상태 (last_token 기반 추적)
+model log_collection_state {
+    execution_id      String           @id
+    last_token        String
+    last_collected_at DateTime?        @db.Timestamptz
+    collection_status CollectionStatus
+    error_message     String
+    updated_at        DateTime?        @default(now()) @db.Timestamptz
+}
+
+// Supabase 프로젝트와 연결된 pipeline 정의 (JSON 기반)
+model pipeline {
+    pipeline_id String   @id @default(uuid()) // projects.project_id와 동일
+    created_at  DateTime @default(now()) @db.Timestamptz
+    data        Json?
+    env         Json?
+}
+
+// 사용자 프로필 정보 (auth.users를 확장)
+model profiles {
+    id              String    @id // auth.users.id 참조
+    username        String?   @unique
+    display_name    String?
+    bio             String?
+    avatar_url      String?
+    github_username String?
+    github_id       String?
+    created_at      DateTime? @default(now()) @db.Timestamptz
+    updated_at      DateTime? @default(now()) @db.Timestamptz
+}
+
+// 프로젝트 정보 (빌드 대상 저장소 등)
+model projects {
+    project_id              String   @id @default(uuid())
+    name                    String   @unique
+    description             String?
+    github_owner            String
+    github_repo_id          String   @unique
+    github_repo_name        String
+    github_repo_url         String
+    installation_id         String? // GitHub Installation 참조
+    user_id                 String // auth.users.id
+    selected_branch         String?  @default("main")
+    created_at              DateTime @default(now()) @db.Timestamptz
+    updated_at              DateTime @default(now()) @db.Timestamptz
+    codebuild_project_name  String?  @unique
+    build_image             String   @default("aws/codebuild/standard:7.0")
+    compute_type            String   @default("BUILD_GENERAL1_MEDIUM")
+    build_timeout           Int      @default(60)
+    artifact_bucket         String?  @unique
+    artifact_retention_days Int?
+    cloudwatch_log_group    String?  @unique
+    codebuild_status        String?  @default("PENDING")
+    codebuild_error_message String?
+}
+
+// GitHub Installation 정보 (user와 연결)
+model github_installations {
+    installation_id        String    @id @default(uuid())
+    user_id                String
+    account_id             String
+    account_login          String
+    account_type           String
+    github_installation_id String    @unique
+    is_active              Boolean?  @default(true)
+    created_at             DateTime? @default(now()) @db.Timestamptz
+    updated_at             DateTime? @default(now()) @db.Timestamptz
+}
+
+// GitHub Push 이벤트 수신 기록
+model push_events {
+    event_id           String    @id @default(uuid())
+    project_id         String
+    commit_sha         String
+    commit_message     String?
+    commit_author_name String?
+    pushed_at          DateTime  @db.Timestamptz
+    branch_name        String?
+    created_at         DateTime? @default(now()) @db.Timestamptz
+}
