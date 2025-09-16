@@ -8,6 +8,7 @@ import { CodeBuildModule } from './codebuild/codebuild.module';
 import { BuildsModule } from './builds/builds.module';
 import { CloudWatchLogsModule } from './cloudwatch-logs/cloudwatch-logs.module';
 import { LogsModule } from './logs/logs.module';
+import { PipelineModule } from './pipeline/pipeline.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { LogsModule } from './logs/logs.module';
     CodeBuildModule,
     CloudWatchLogsModule,
     LogsModule,
+    PipelineModule,
   ],
   controllers: [AppController],
   providers: [AppService],
