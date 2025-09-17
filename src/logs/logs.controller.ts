@@ -16,6 +16,7 @@ import { map, filter } from 'rxjs/operators';
 import { LogsService } from './logs.service';
 import { GetUnifiedLogsDto } from './dto/get-unified-logs.dto';
 import { SearchLogsDto, SearchLogsResponse } from './dto/search-logs.dto';
+import { BuildMetadataResponseDto } from './dto/build-metadata.dto';
 import { Body } from '@nestjs/common';
 
 /**
@@ -241,6 +242,24 @@ export class LogsController {
         ? `Logs archived successfully for build: ${buildId}`
         : `Failed to archive logs for build: ${buildId}`,
     };
+  }
+
+  /**
+   * 빌드 메타데이터 조회
+   * 
+   * 빌드의 상세 정보, 단계별 상태, 메트릭 등을 조회합니다.
+   * 
+   * @param buildId - AWS CodeBuild ID
+   * @returns 빌드 메타데이터
+   * 
+   * @example
+   * GET /logs/builds/123/metadata
+   */
+  @Get('builds/:buildId/metadata')
+  async getBuildMetadata(
+    @Param('buildId') buildId: string,
+  ): Promise<BuildMetadataResponseDto | null> {
+    return this.logsService.getBuildMetadata(buildId);
   }
 
   /**

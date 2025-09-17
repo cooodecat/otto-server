@@ -1105,6 +1105,167 @@ export class LogsService implements OnModuleDestroy {
   }
 
   /**
+   * 빌드 메타데이터 조회
+   * 
+   * 빌드의 상세 정보, 단계별 상태, 메트릭 등을 조회합니다.
+   * 
+   * @param buildId - AWS CodeBuild ID
+   * @returns 빌드 메타데이터
+   */
+  async getBuildMetadata(buildId: string): Promise<{
+    buildId: string;
+    buildNumber?: number;
+    status: string;
+    trigger: {
+      type: string;
+      author?: string;
+      timestamp?: string;
+    };
+    repository: {
+      branch?: string;
+      commitHash?: string;
+      commitMessage?: string;
+    };
+    phases: Array<{
+      name: string;
+      status: string;
+      startTime?: string;
+      endTime?: string;
+      duration?: string;
+    }>;
+    metrics: {
+      totalLines: number;
+      errorCount: number;
+      warningCount: number;
+      infoCount: number;
+      fileSize: number;
+    };
+    isArchived: boolean;
+    archivedAt?: string;
+    startTime?: string;
+    endTime?: string;
+    duration?: string;
+    projectId?: string;
+    userId?: string;
+    logsUrl?: string;
+    errorMessage?: string;
+  } | null> {
+    try {
+      // 1. build_histories 조회
+      const { data: buildHistory, error: bhError } = await this.supabaseService
+        .getClient()
+        .from('build_histories')
+        .select('*')
+        .eq('aws_build_id', buildId)
+        .single();
+
+      if (bhError || !buildHistory) {
+        this.logger.warn(`Build history not found for ${buildId}`);
+        return null;
+      }
+
+      // 2. build_execution_phases 조회
+      const { data: phases } = await this.supabaseService
+        .getClient()
+        .from('build_execution_phases')
+        .select('*')
+        .eq('build_history_id', buildHistory.id)
+        .order('created_at', { ascending: true });
+
+      // 3. log_archives 조회 (메트릭용)
+      const { data: archive } = await this.supabaseService
+        .getClient()
+        .from('log_archives')
+        .select('*')
+        .eq('build_history_id', buildHistory.id)
+        .single();
+
+      // 4. 빌드 상태 매핑
+      let status = 'UNKNOWN';
+      const execStatus = buildHistory.build_execution_status?.toUpperCase();
+      if (execStatus === 'SUCCEEDED') status = 'SUCCESS';
+      else if (execStatus === 'FAILED') status = 'FAILED';
+      else if (execStatus === 'STOPPED') status = 'STOPPED';
+      else if (execStatus === 'IN_PROGRESS') status = 'RUNNING';
+      else if (execStatus === 'PENDING') status = 'PENDING';
+
+      // 5. 트리거 정보 추출 (build_spec에서)
+      const buildSpec = buildHistory.build_spec as any;
+      const envVars = buildHistory.environment_variables as any;
+      
+      let triggerType = 'Manual';
+      let triggerAuthor = buildHistory.user_id;
+      
+      // GitHub 트리거 감지
+      if (envVars?.GITHUB_EVENT_NAME === 'push') {
+        triggerType = 'GitHub Push';
+        triggerAuthor = envVars.GITHUB_ACTOR || triggerAuthor;
+      }
+
+      // 6. 리포지토리 정보 추출
+      const repository = {
+        branch: envVars?.GITHUB_REF_NAME || envVars?.BRANCH_NAME,
+        commitHash: envVars?.GITHUB_SHA || envVars?.COMMIT_ID,
+        commitMessage: envVars?.COMMIT_MESSAGE,
+      };
+
+      // 7. 단계별 정보 매핑
+      const phasesData = (phases || []).map(phase => ({
+        name: phase.phase_type,
+        status: phase.phase_status,
+        startTime: phase.phase_start_time,
+        endTime: phase.phase_end_time,
+        duration: phase.phase_duration_seconds 
+          ? `${phase.phase_duration_seconds}s` 
+          : undefined,
+      }));
+
+      // 8. 메트릭 정보
+      const metrics = {
+        totalLines: archive?.total_log_lines || 0,
+        errorCount: archive?.error_count || 0,
+        warningCount: archive?.warning_count || 0,
+        infoCount: archive?.info_count || 0,
+        fileSize: archive?.file_size_bytes || 0,
+      };
+
+      // 9. 기간 계산
+      let duration: string | undefined;
+      if (buildHistory.duration_seconds) {
+        const minutes = Math.floor(buildHistory.duration_seconds / 60);
+        const seconds = buildHistory.duration_seconds % 60;
+        duration = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+      }
+
+      return {
+        buildId,
+        buildNumber: undefined, // 빌드 번호는 별도 관리 필요
+        status,
+        trigger: {
+          type: triggerType,
+          author: triggerAuthor,
+          timestamp: buildHistory.created_at,
+        },
+        repository,
+        phases: phasesData,
+        metrics,
+        isArchived: !!archive,
+        archivedAt: archive?.export_completed_at,
+        startTime: buildHistory.start_time,
+        endTime: buildHistory.end_time,
+        duration,
+        projectId: buildHistory.project_id,
+        userId: buildHistory.user_id,
+        logsUrl: buildHistory.logs_url,
+        errorMessage: buildHistory.build_error_message,
+      };
+    } catch (error) {
+      this.logger.error(`Error retrieving build metadata for ${buildId}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * 로그 검색 기능 - 정규식과 컨텍스트 지원
    * 
    * @param buildId - AWS CodeBuild ID
