@@ -9,6 +9,7 @@ const supabase = createClient(
 // GitHub App 설정
 const GITHUB_WEBHOOK_SECRET = Deno.env.get('OTTO_GITHUB_WEBHOOK_SECRET') ?? '';
 
+
 // CORS 헤더 설정
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -41,6 +42,8 @@ function createSuccessResponse(
     },
   });
 }
+
+
 
 // GitHub 웹훅 서명 검증
 async function verifyGithubSignature(
@@ -215,75 +218,14 @@ async function handlePushEvent(payload: any) {
 }
 
 // Installation 이벤트 처리
-async function handleInstallationEvent(payload: any) {
+function handleInstallationEvent(payload: any) {
   console.log('Processing installation event:', {
     action: payload.action,
     installation: payload.installation?.id,
   });
 
-  const { action, installation, sender } = payload;
-
-  if (!installation || !installation.id) {
-    console.log('Invalid installation data in webhook payload');
-    return;
-  }
-
-  // 실제 GitHub installation 데이터만 처리
-  if (action === 'created' || action === 'unsuspend') {
-    try {
-      // GitHub installation 데이터 검증
-      const installationId = installation.id.toString();
-      const accountLogin = installation.account?.login || '';
-      const accountId = installation.account?.id;
-      const accountType = installation.account?.type || '';
-
-      // 더미 데이터 패턴 검증 (user_ 프리픽스 차단)
-      if (accountLogin.startsWith('user_') || !accountId || !accountLogin) {
-        console.log('Blocking potential dummy installation data:', {
-          installationId,
-          accountLogin,
-          accountId,
-          accountType,
-        });
-        return;
-      }
-
-      console.log('Processing valid GitHub installation:', {
-        installationId,
-        accountLogin,
-        accountId,
-        accountType,
-        action,
-      });
-
-      // Note: 실제 사용자 연결은 OAuth 콜백에서 처리되므로
-      // 여기서는 로깅만 수행하고 데이터베이스 저장은 하지 않음
-    } catch (error) {
-      console.error('Error processing installation event:', error);
-    }
-  } else if (action === 'deleted' || action === 'suspend') {
-    // Installation 삭제/중단 이벤트 처리
-    const installationId = installation.id.toString();
-
-    try {
-      // 해당 installation을 비활성화
-      const { error } = await supabase
-        .from('github_installations')
-        .update({
-          is_active: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('installation_id', installationId);
-
-      if (error) {
-        console.error('Error deactivating installation:', error);
-      } else {
-        console.log('Successfully deactivated installation:', installationId);
-      }
-    } catch (error) {
-      console.error('Error handling installation deletion:', error);
-    }
-  }
+  // Installation 이벤트는 현재 별도 처리 없음
+  // 필요시 사용자 연결 로직 추가
 }
 
 // Pull Request 이벤트 처리
@@ -309,7 +251,7 @@ async function handleWebhookEvent(payload: any, eventType: string) {
       await handlePushEvent(payload);
       break;
     case 'installation':
-      await handleInstallationEvent(payload);
+      handleInstallationEvent(payload);
       break;
     case 'pull_request':
       handlePullRequestEvent(payload);

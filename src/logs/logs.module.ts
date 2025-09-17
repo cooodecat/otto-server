@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { LogsController } from './logs.controller';
 import { LogsService } from './logs.service';
 import { CloudWatchLogsModule } from '../cloudwatch-logs/cloudwatch-logs.module';
+import { CodeBuildModule } from '../codebuild/codebuild.module';
 
 /**
  * NestJS module for build log collection and streaming functionality
@@ -31,7 +32,7 @@ import { CloudWatchLogsModule } from '../cloudwatch-logs/cloudwatch-logs.module'
  * ```
  */
 @Module({
-  imports: [CloudWatchLogsModule],
+  imports: [CloudWatchLogsModule, CodeBuildModule],
   controllers: [LogsController],
   providers: [LogsService],
   exports: [LogsService], // 다른 모듈에서 사용할 수 있도록 export

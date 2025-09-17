@@ -5,6 +5,7 @@ import {
   StartBuildCommand,
   BatchGetBuildsCommand,
   CreateProjectCommand,
+  CreateProjectCommandOutput,
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
