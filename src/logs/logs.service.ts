@@ -833,37 +833,126 @@ export class LogsService implements OnModuleDestroy {
   }
 
   /**
-   * 통합 로그 조회 - 실시간/아카이브 자동 선택
+   * 통합 로그 조회 - 실시간/아카이브 자동 선택 (페이지네이션, 필터링 지원)
    * 
    * 빌드가 활성 상태면 메모리에서, 완료된 빌드면 DB에서 조회합니다.
    * 
    * @param buildId - AWS CodeBuild ID
+   * @param options - 쿼리 옵션 (페이지네이션, 필터링, 검색)
    * @returns 로그 데이터 (소스 정보 포함)
    */
-  async getUnifiedLogs(buildId: string): Promise<{
+  async getUnifiedLogs(
+    buildId: string,
+    options?: {
+      limit?: number;
+      offset?: number;
+      levels?: string[];
+      search?: string;
+      regex?: boolean;
+      timeRange?: string;
+    },
+  ): Promise<{
     source: 'realtime' | 'archive';
     logs: LogEvent[];
     metadata?: any;
+    pagination?: {
+      total: number;
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+    };
   }> {
+    const limit = options?.limit || 100;
+    const offset = options?.offset || 0;
+    
     // 먼저 메모리 캐시 확인
     const buildData = this.buildLogs.get(buildId);
     
     if (buildData?.isActive) {
       // 실행 중인 빌드: 메모리에서 조회
+      let filteredLogs = [...buildData.logs];
+      
+      // 레벨 필터링
+      if (options?.levels && options.levels.length > 0) {
+        const levelsUpper = options.levels.map(l => l.toUpperCase());
+        filteredLogs = filteredLogs.filter(log => {
+          const normalized = normalizeLogEvent(log);
+          return levelsUpper.includes(normalized.level);
+        });
+      }
+      
+      // 검색 필터링
+      if (options?.search) {
+        if (options.regex) {
+          try {
+            const regex = new RegExp(options.search, 'i');
+            filteredLogs = filteredLogs.filter(log => regex.test(log.message));
+          } catch (e) {
+            this.logger.warn(`Invalid regex pattern: ${options.search}`);
+            // 일반 텍스트 검색으로 폴백
+            const searchLower = options.search.toLowerCase();
+            filteredLogs = filteredLogs.filter(log => 
+              log.message.toLowerCase().includes(searchLower)
+            );
+          }
+        } else {
+          const searchLower = options.search.toLowerCase();
+          filteredLogs = filteredLogs.filter(log => 
+            log.message.toLowerCase().includes(searchLower)
+          );
+        }
+      }
+      
+      // 시간 범위 필터링
+      if (options?.timeRange && options.timeRange !== 'all') {
+        const now = Date.now();
+        let timeLimit = 0;
+        
+        switch (options.timeRange) {
+          case '1h':
+            timeLimit = now - 60 * 60 * 1000;
+            break;
+          case '24h':
+            timeLimit = now - 24 * 60 * 60 * 1000;
+            break;
+          case '7d':
+            timeLimit = now - 7 * 24 * 60 * 60 * 1000;
+            break;
+          case '30d':
+            timeLimit = now - 30 * 24 * 60 * 60 * 1000;
+            break;
+        }
+        
+        if (timeLimit > 0) {
+          filteredLogs = filteredLogs.filter(log => log.timestamp >= timeLimit);
+        }
+      }
+      
+      // 페이지네이션 적용
+      const total = filteredLogs.length;
+      const paginatedLogs = filteredLogs.slice(offset, offset + limit);
+      
       return {
         source: 'realtime',
-        logs: buildData.logs,
+        logs: paginatedLogs,
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total,
+        },
       };
     }
 
-    // 완료된 빌드: DB에서 조회
-    const archived = await this.getArchivedLogs(buildId);
+    // 완료된 빌드: DB에서 조회 (확장된 옵션 지원)
+    const archived = await this.getArchivedLogsWithFilters(buildId, options);
     
     if (archived) {
       return {
         source: 'archive',
         logs: archived.logs,
         metadata: archived.metadata,
+        pagination: archived.pagination,
       };
     }
 
@@ -871,7 +960,123 @@ export class LogsService implements OnModuleDestroy {
     return {
       source: 'realtime',
       logs: [],
+      pagination: {
+        total: 0,
+        limit,
+        offset,
+        hasMore: false,
+      },
     };
+  }
+
+  /**
+   * DB에서 필터링된 아카이브 로그 조회
+   */
+  private async getArchivedLogsWithFilters(
+    buildId: string,
+    options?: {
+      limit?: number;
+      offset?: number;
+      levels?: string[];
+      search?: string;
+      regex?: boolean;
+      timeRange?: string;
+    },
+  ): Promise<{
+    logs: LogEvent[];
+    metadata?: any;
+    pagination?: {
+      total: number;
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+    };
+  } | null> {
+    try {
+      const limit = options?.limit || 100;
+      const offset = options?.offset || 0;
+      
+      // 기존 getArchivedLogs 로직 활용
+      const fullArchive = await this.getArchivedLogs(buildId);
+      if (!fullArchive) {
+        return null;
+      }
+      
+      let filteredLogs = [...fullArchive.logs];
+      
+      // 레벨 필터링
+      if (options?.levels && options.levels.length > 0) {
+        const levelsUpper = options.levels.map(l => l.toUpperCase());
+        filteredLogs = filteredLogs.filter(log => {
+          const normalized = normalizeLogEvent(log);
+          return levelsUpper.includes(normalized.level);
+        });
+      }
+      
+      // 검색 필터링
+      if (options?.search) {
+        if (options.regex) {
+          try {
+            const regex = new RegExp(options.search, 'i');
+            filteredLogs = filteredLogs.filter(log => regex.test(log.message));
+          } catch (e) {
+            this.logger.warn(`Invalid regex pattern: ${options.search}`);
+            const searchLower = options.search.toLowerCase();
+            filteredLogs = filteredLogs.filter(log => 
+              log.message.toLowerCase().includes(searchLower)
+            );
+          }
+        } else {
+          const searchLower = options.search.toLowerCase();
+          filteredLogs = filteredLogs.filter(log => 
+            log.message.toLowerCase().includes(searchLower)
+          );
+        }
+      }
+      
+      // 시간 범위 필터링
+      if (options?.timeRange && options.timeRange !== 'all') {
+        const now = Date.now();
+        let timeLimit = 0;
+        
+        switch (options.timeRange) {
+          case '1h':
+            timeLimit = now - 60 * 60 * 1000;
+            break;
+          case '24h':
+            timeLimit = now - 24 * 60 * 60 * 1000;
+            break;
+          case '7d':
+            timeLimit = now - 7 * 24 * 60 * 60 * 1000;
+            break;
+          case '30d':
+            timeLimit = now - 30 * 24 * 60 * 60 * 1000;
+            break;
+        }
+        
+        if (timeLimit > 0) {
+          filteredLogs = filteredLogs.filter(log => log.timestamp >= timeLimit);
+        }
+      }
+      
+      // 페이지네이션 적용
+      const total = filteredLogs.length;
+      const paginatedLogs = filteredLogs.slice(offset, offset + limit);
+      
+      return {
+        logs: paginatedLogs,
+        metadata: fullArchive.metadata,
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total,
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Error retrieving filtered archived logs for ${buildId}:`, error);
+      return null;
+    }
   }
 
   /**
@@ -897,5 +1102,176 @@ export class LogsService implements OnModuleDestroy {
     } catch (error) {
       this.logger.error(`Error handling build completion for ${buildId}:`, error);
     }
+  }
+
+  /**
+   * 로그 검색 기능 - 정규식과 컨텍스트 지원
+   * 
+   * @param buildId - AWS CodeBuild ID
+   * @param searchOptions - 검색 옵션
+   * @returns 검색 결과와 컨텍스트
+   */
+  async searchLogs(
+    buildId: string,
+    searchOptions: {
+      query: string;
+      regex?: boolean;
+      levels?: string[];
+      timeRange?: { start?: string; end?: string };
+      includeContext?: boolean;
+      contextLines?: number;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<{
+    results: Array<{
+      lineNumber: number;
+      timestamp: number;
+      level?: string;
+      message: string;
+      matches?: Array<{ start: number; end: number }>;
+      context?: {
+        before: Array<{ lineNumber: number; message: string }>;
+        after: Array<{ lineNumber: number; message: string }>;
+      };
+    }>;
+    totalMatches: number;
+    searchTime: number;
+    query: string;
+    regex: boolean;
+  }> {
+    const startTime = Date.now();
+    
+    // 통합 로그 가져오기 (전체)
+    const unifiedLogs = await this.getUnifiedLogs(buildId, {
+      limit: 999999, // 모든 로그
+      offset: 0,
+    });
+    
+    if (!unifiedLogs.logs || unifiedLogs.logs.length === 0) {
+      return {
+        results: [],
+        totalMatches: 0,
+        searchTime: Date.now() - startTime,
+        query: searchOptions.query,
+        regex: searchOptions.regex || false,
+      };
+    }
+    
+    const results: Array<any> = [];
+    const logs = unifiedLogs.logs;
+    let searchPattern: RegExp | string;
+    
+    // 검색 패턴 준비
+    if (searchOptions.regex) {
+      try {
+        searchPattern = new RegExp(searchOptions.query, 'gi');
+      } catch (e) {
+        this.logger.warn(`Invalid regex pattern: ${searchOptions.query}`);
+        searchPattern = searchOptions.query.toLowerCase();
+      }
+    } else {
+      searchPattern = searchOptions.query.toLowerCase();
+    }
+    
+    // 로그 검색
+    logs.forEach((log, index) => {
+      // 레벨 필터링
+      if (searchOptions.levels && searchOptions.levels.length > 0) {
+        const normalized = normalizeLogEvent(log);
+        if (!searchOptions.levels.map(l => l.toUpperCase()).includes(normalized.level)) {
+          return;
+        }
+      }
+      
+      // 시간 범위 필터링
+      if (searchOptions.timeRange) {
+        const logTime = log.timestamp;
+        if (searchOptions.timeRange.start) {
+          const startTime = new Date(searchOptions.timeRange.start).getTime();
+          if (logTime < startTime) return;
+        }
+        if (searchOptions.timeRange.end) {
+          const endTime = new Date(searchOptions.timeRange.end).getTime();
+          if (logTime > endTime) return;
+        }
+      }
+      
+      // 검색 매칭
+      let matches: Array<{ start: number; end: number }> = [];
+      let isMatch = false;
+      
+      if (searchPattern instanceof RegExp) {
+        const allMatches = [...log.message.matchAll(new RegExp(searchPattern.source, 'gi'))];
+        if (allMatches.length > 0) {
+          isMatch = true;
+          matches = allMatches.map(match => ({
+            start: match.index || 0,
+            end: (match.index || 0) + match[0].length,
+          }));
+        }
+      } else {
+        const lowerMessage = log.message.toLowerCase();
+        const searchIndex = lowerMessage.indexOf(searchPattern);
+        if (searchIndex !== -1) {
+          isMatch = true;
+          matches = [{
+            start: searchIndex,
+            end: searchIndex + searchOptions.query.length,
+          }];
+        }
+      }
+      
+      if (isMatch) {
+        const normalized = normalizeLogEvent(log);
+        const result: any = {
+          lineNumber: index + 1,
+          timestamp: log.timestamp,
+          level: normalized.level,
+          message: log.message,
+          matches,
+        };
+        
+        // 컨텍스트 추가
+        if (searchOptions.includeContext) {
+          const contextLines = searchOptions.contextLines || 3;
+          const before: Array<{ lineNumber: number; message: string }> = [];
+          const after: Array<{ lineNumber: number; message: string }> = [];
+          
+          // 이전 컨텍스트
+          for (let i = Math.max(0, index - contextLines); i < index; i++) {
+            before.push({
+              lineNumber: i + 1,
+              message: logs[i].message,
+            });
+          }
+          
+          // 이후 컨텍스트
+          for (let i = index + 1; i < Math.min(logs.length, index + contextLines + 1); i++) {
+            after.push({
+              lineNumber: i + 1,
+              message: logs[i].message,
+            });
+          }
+          
+          result.context = { before, after };
+        }
+        
+        results.push(result);
+      }
+    });
+    
+    // 페이지네이션 적용
+    const limit = searchOptions.limit || 100;
+    const offset = searchOptions.offset || 0;
+    const paginatedResults = results.slice(offset, offset + limit);
+    
+    return {
+      results: paginatedResults,
+      totalMatches: results.length,
+      searchTime: Date.now() - startTime,
+      query: searchOptions.query,
+      regex: searchOptions.regex || false,
+    };
   }
 }

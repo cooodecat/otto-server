@@ -7,11 +7,16 @@ import {
   Res,
   Sse,
   MessageEvent,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { Observable, Subject } from 'rxjs';
 import { map, filter } from 'rxjs/operators';
 import { LogsService } from './logs.service';
+import { GetUnifiedLogsDto } from './dto/get-unified-logs.dto';
+import { SearchLogsDto, SearchLogsResponse } from './dto/search-logs.dto';
+import { Body } from '@nestjs/common';
 
 /**
  * Represents a single log event from CloudWatch Logs API
@@ -158,20 +163,41 @@ export class LogsController {
   }
 
   /**
-   * 통합 로그 조회 - 실시간/아카이브 자동 선택
+   * 통합 로그 조회 - 실시간/아카이브 자동 선택 (페이지네이션, 필터링 지원)
    * 
    * 빌드가 활성 상태면 메모리에서, 완료된 빌드면 DB에서 자동으로 조회합니다.
    * 
    * @param buildId - AWS CodeBuild ID
+   * @param query - 쿼리 파라미터 (페이지네이션, 필터링, 검색)
    * @returns 로그 데이터와 소스 정보
+   * 
+   * @example
+   * GET /logs/builds/123/unified?limit=50&offset=0&levels=ERROR,WARN&search=failed
    */
   @Get('builds/:buildId/unified')
-  async getUnifiedLogs(@Param('buildId') buildId: string): Promise<{
+  @UsePipes(new ValidationPipe({ transform: true, transformOptions: { enableImplicitConversion: true } }))
+  async getUnifiedLogs(
+    @Param('buildId') buildId: string,
+    @Query() query: GetUnifiedLogsDto,
+  ): Promise<{
     source: 'realtime' | 'archive';
     logs: LogEvent[];
     metadata?: any;
+    pagination?: {
+      total: number;
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+    };
   }> {
-    return this.logsService.getUnifiedLogs(buildId);
+    return this.logsService.getUnifiedLogs(buildId, {
+      limit: query.limit,
+      offset: query.offset,
+      levels: query.levels,
+      search: query.search,
+      regex: query.regex,
+      timeRange: query.timeRange,
+    });
   }
 
   /**
@@ -215,6 +241,43 @@ export class LogsController {
         ? `Logs archived successfully for build: ${buildId}`
         : `Failed to archive logs for build: ${buildId}`,
     };
+  }
+
+  /**
+   * 로그 검색 엔드포인트 - 정규식과 컨텍스트 지원
+   * 
+   * 빌드 로그에서 특정 패턴을 검색하고 매칭된 결과와 주변 컨텍스트를 반환합니다.
+   * 
+   * @param buildId - AWS CodeBuild ID
+   * @param searchDto - 검색 옵션
+   * @returns 검색 결과와 컨텍스트
+   * 
+   * @example
+   * POST /logs/builds/123/search
+   * {
+   *   "query": "error|failed",
+   *   "regex": true,
+   *   "levels": ["ERROR"],
+   *   "includeContext": true,
+   *   "contextLines": 5
+   * }
+   */
+  @Post('builds/:buildId/search')
+  @UsePipes(new ValidationPipe({ transform: true, transformOptions: { enableImplicitConversion: true } }))
+  async searchLogs(
+    @Param('buildId') buildId: string,
+    @Body() searchDto: SearchLogsDto,
+  ): Promise<SearchLogsResponse> {
+    return this.logsService.searchLogs(buildId, {
+      query: searchDto.query,
+      regex: searchDto.regex,
+      levels: searchDto.levels,
+      timeRange: searchDto.timeRange,
+      includeContext: searchDto.includeContext,
+      contextLines: searchDto.contextLines,
+      limit: searchDto.limit,
+      offset: searchDto.offset,
+    });
   }
 
   /**
