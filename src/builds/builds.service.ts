@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LogsService } from '../logs/logs.service';
 import {
@@ -185,14 +191,16 @@ export class BuildsService {
           this.logger.log(
             `Build ${awsBuildId} reached terminal status: ${updateData.buildExecutionStatus}. Triggering log archiving.`,
           );
-          
+
           // 비동기로 로그 아카이빙 실행 (빌드 업데이트 응답을 지연시키지 않음)
-          void this.logsService.handleBuildComplete(awsBuildId).catch(error => {
-            this.logger.error(
-              `Failed to archive logs for build ${awsBuildId}:`,
-              error,
-            );
-          });
+          void this.logsService
+            .handleBuildComplete(awsBuildId)
+            .catch((error) => {
+              this.logger.error(
+                `Failed to archive logs for build ${awsBuildId}:`,
+                error,
+              );
+            });
         }
       }
 

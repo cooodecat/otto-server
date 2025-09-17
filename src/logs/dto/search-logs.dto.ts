@@ -1,4 +1,13 @@
-import { IsString, IsBoolean, IsArray, IsOptional, IsNumber, Min, ValidateNested, IsEnum } from 'class-validator';
+import {
+  IsString,
+  IsBoolean,
+  IsArray,
+  IsOptional,
+  IsNumber,
+  Min,
+  ValidateNested,
+  IsEnum,
+} from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { LogLevel } from './get-unified-logs.dto';
 
@@ -27,7 +36,7 @@ export class SearchLogsDto {
   @IsOptional()
   @Transform(({ value }) => {
     if (typeof value === 'string') {
-      return value.split(',').map(v => v.trim().toUpperCase());
+      return value.split(',').map((v) => v.trim().toUpperCase());
     }
     return value;
   })

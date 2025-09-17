@@ -646,10 +646,10 @@ export class LogsService implements OnModuleDestroy {
         this.logger.log(
           `Build ${buildId} reached terminal state ${s}. Stopping log collection and archiving.`,
         );
-        
+
         // 로그를 DB에 아카이빙
         await this.archiveToDatabase(buildId);
-        
+
         // 로그 수집 중지
         this.stopLogCollection(buildId);
       }
@@ -662,10 +662,10 @@ export class LogsService implements OnModuleDestroy {
 
   /**
    * 메모리에 캐시된 로그를 Supabase DB에 아카이빙합니다
-   * 
+   *
    * 빌드가 완료되면 메모리에 저장된 로그를 log_archives 테이블에 저장합니다.
    * JSONB 형식으로 전체 로그를 저장하여 향후 조회가 가능하도록 합니다.
-   * 
+   *
    * @param buildId - AWS CodeBuild ID (예: 'otto-codebuild-project:uuid')
    * @returns 아카이빙 성공 여부
    */
@@ -717,8 +717,10 @@ export class LogsService implements OnModuleDestroy {
       const timestamps = buildData.logs
         .map((log) => log.timestamp)
         .filter((ts) => ts);
-      const firstTimestamp = timestamps.length > 0 ? Math.min(...timestamps) : null;
-      const lastTimestamp = timestamps.length > 0 ? Math.max(...timestamps) : null;
+      const firstTimestamp =
+        timestamps.length > 0 ? Math.min(...timestamps) : null;
+      const lastTimestamp =
+        timestamps.length > 0 ? Math.max(...timestamps) : null;
 
       // log_archives 테이블에 저장
       const { error: archiveError } = await this.supabaseService
@@ -738,8 +740,12 @@ export class LogsService implements OnModuleDestroy {
             file_size_bytes: JSON.stringify(buildData.logs).length, // 대략적인 크기
             archived_files: buildData.logs, // 전체 로그를 JSONB로 저장
             error_summary: errorMessages.length > 0 ? errorMessages : null,
-            first_log_timestamp: firstTimestamp ? new Date(firstTimestamp).toISOString() : null,
-            last_log_timestamp: lastTimestamp ? new Date(lastTimestamp).toISOString() : null,
+            first_log_timestamp: firstTimestamp
+              ? new Date(firstTimestamp).toISOString()
+              : null,
+            last_log_timestamp: lastTimestamp
+              ? new Date(lastTimestamp).toISOString()
+              : null,
             export_started_at: new Date().toISOString(),
             export_completed_at: new Date().toISOString(),
           },
@@ -772,9 +778,9 @@ export class LogsService implements OnModuleDestroy {
 
   /**
    * DB에 아카이빙된 로그를 조회합니다
-   * 
+   *
    * log_archives 테이블에서 특정 빌드의 아카이빙된 로그를 가져옵니다.
-   * 
+   *
    * @param buildId - AWS CodeBuild ID
    * @returns 아카이빙된 로그 데이터
    */
@@ -827,16 +833,19 @@ export class LogsService implements OnModuleDestroy {
         },
       };
     } catch (error) {
-      this.logger.error(`Error retrieving archived logs for ${buildId}:`, error);
+      this.logger.error(
+        `Error retrieving archived logs for ${buildId}:`,
+        error,
+      );
       return null;
     }
   }
 
   /**
    * 통합 로그 조회 - 실시간/아카이브 자동 선택 (페이지네이션, 필터링 지원)
-   * 
+   *
    * 빌드가 활성 상태면 메모리에서, 완료된 빌드면 DB에서 조회합니다.
-   * 
+   *
    * @param buildId - AWS CodeBuild ID
    * @param options - 쿼리 옵션 (페이지네이션, 필터링, 검색)
    * @returns 로그 데이터 (소스 정보 포함)
@@ -864,50 +873,52 @@ export class LogsService implements OnModuleDestroy {
   }> {
     const limit = options?.limit || 100;
     const offset = options?.offset || 0;
-    
+
     // 먼저 메모리 캐시 확인
     const buildData = this.buildLogs.get(buildId);
-    
+
     if (buildData?.isActive) {
       // 실행 중인 빌드: 메모리에서 조회
       let filteredLogs = [...buildData.logs];
-      
+
       // 레벨 필터링
       if (options?.levels && options.levels.length > 0) {
-        const levelsUpper = options.levels.map(l => l.toUpperCase());
-        filteredLogs = filteredLogs.filter(log => {
+        const levelsUpper = options.levels.map((l) => l.toUpperCase());
+        filteredLogs = filteredLogs.filter((log) => {
           const normalized = normalizeLogEvent(log);
           return levelsUpper.includes(normalized.level);
         });
       }
-      
+
       // 검색 필터링
       if (options?.search) {
         if (options.regex) {
           try {
             const regex = new RegExp(options.search, 'i');
-            filteredLogs = filteredLogs.filter(log => regex.test(log.message));
+            filteredLogs = filteredLogs.filter((log) =>
+              regex.test(log.message),
+            );
           } catch (e) {
             this.logger.warn(`Invalid regex pattern: ${options.search}`);
             // 일반 텍스트 검색으로 폴백
             const searchLower = options.search.toLowerCase();
-            filteredLogs = filteredLogs.filter(log => 
-              log.message.toLowerCase().includes(searchLower)
+            filteredLogs = filteredLogs.filter((log) =>
+              log.message.toLowerCase().includes(searchLower),
             );
           }
         } else {
           const searchLower = options.search.toLowerCase();
-          filteredLogs = filteredLogs.filter(log => 
-            log.message.toLowerCase().includes(searchLower)
+          filteredLogs = filteredLogs.filter((log) =>
+            log.message.toLowerCase().includes(searchLower),
           );
         }
       }
-      
+
       // 시간 범위 필터링
       if (options?.timeRange && options.timeRange !== 'all') {
         const now = Date.now();
         let timeLimit = 0;
-        
+
         switch (options.timeRange) {
           case '1h':
             timeLimit = now - 60 * 60 * 1000;
@@ -922,16 +933,18 @@ export class LogsService implements OnModuleDestroy {
             timeLimit = now - 30 * 24 * 60 * 60 * 1000;
             break;
         }
-        
+
         if (timeLimit > 0) {
-          filteredLogs = filteredLogs.filter(log => log.timestamp >= timeLimit);
+          filteredLogs = filteredLogs.filter(
+            (log) => log.timestamp >= timeLimit,
+          );
         }
       }
-      
+
       // 페이지네이션 적용
       const total = filteredLogs.length;
       const paginatedLogs = filteredLogs.slice(offset, offset + limit);
-      
+
       return {
         source: 'realtime',
         logs: paginatedLogs,
@@ -946,7 +959,7 @@ export class LogsService implements OnModuleDestroy {
 
     // 완료된 빌드: DB에서 조회 (확장된 옵션 지원)
     const archived = await this.getArchivedLogsWithFilters(buildId, options);
-    
+
     if (archived) {
       return {
         source: 'archive',
@@ -995,50 +1008,52 @@ export class LogsService implements OnModuleDestroy {
     try {
       const limit = options?.limit || 100;
       const offset = options?.offset || 0;
-      
+
       // 기존 getArchivedLogs 로직 활용
       const fullArchive = await this.getArchivedLogs(buildId);
       if (!fullArchive) {
         return null;
       }
-      
+
       let filteredLogs = [...fullArchive.logs];
-      
+
       // 레벨 필터링
       if (options?.levels && options.levels.length > 0) {
-        const levelsUpper = options.levels.map(l => l.toUpperCase());
-        filteredLogs = filteredLogs.filter(log => {
+        const levelsUpper = options.levels.map((l) => l.toUpperCase());
+        filteredLogs = filteredLogs.filter((log) => {
           const normalized = normalizeLogEvent(log);
           return levelsUpper.includes(normalized.level);
         });
       }
-      
+
       // 검색 필터링
       if (options?.search) {
         if (options.regex) {
           try {
             const regex = new RegExp(options.search, 'i');
-            filteredLogs = filteredLogs.filter(log => regex.test(log.message));
+            filteredLogs = filteredLogs.filter((log) =>
+              regex.test(log.message),
+            );
           } catch (e) {
             this.logger.warn(`Invalid regex pattern: ${options.search}`);
             const searchLower = options.search.toLowerCase();
-            filteredLogs = filteredLogs.filter(log => 
-              log.message.toLowerCase().includes(searchLower)
+            filteredLogs = filteredLogs.filter((log) =>
+              log.message.toLowerCase().includes(searchLower),
             );
           }
         } else {
           const searchLower = options.search.toLowerCase();
-          filteredLogs = filteredLogs.filter(log => 
-            log.message.toLowerCase().includes(searchLower)
+          filteredLogs = filteredLogs.filter((log) =>
+            log.message.toLowerCase().includes(searchLower),
           );
         }
       }
-      
+
       // 시간 범위 필터링
       if (options?.timeRange && options.timeRange !== 'all') {
         const now = Date.now();
         let timeLimit = 0;
-        
+
         switch (options.timeRange) {
           case '1h':
             timeLimit = now - 60 * 60 * 1000;
@@ -1053,16 +1068,18 @@ export class LogsService implements OnModuleDestroy {
             timeLimit = now - 30 * 24 * 60 * 60 * 1000;
             break;
         }
-        
+
         if (timeLimit > 0) {
-          filteredLogs = filteredLogs.filter(log => log.timestamp >= timeLimit);
+          filteredLogs = filteredLogs.filter(
+            (log) => log.timestamp >= timeLimit,
+          );
         }
       }
-      
+
       // 페이지네이션 적용
       const total = filteredLogs.length;
       const paginatedLogs = filteredLogs.slice(offset, offset + limit);
-      
+
       return {
         logs: paginatedLogs,
         metadata: fullArchive.metadata,
@@ -1074,41 +1091,49 @@ export class LogsService implements OnModuleDestroy {
         },
       };
     } catch (error) {
-      this.logger.error(`Error retrieving filtered archived logs for ${buildId}:`, error);
+      this.logger.error(
+        `Error retrieving filtered archived logs for ${buildId}:`,
+        error,
+      );
       return null;
     }
   }
 
   /**
    * 빌드 완료 시 호출되는 메서드 (외부에서 명시적으로 호출 가능)
-   * 
+   *
    * BuildsService에서 빌드 상태가 완료로 업데이트될 때 호출됩니다.
-   * 
+   *
    * @param buildId - AWS CodeBuild ID
    */
   async handleBuildComplete(buildId: string): Promise<void> {
     try {
       // 로그 아카이빙
       await this.archiveToDatabase(buildId);
-      
+
       // 로그 수집 중지
       this.stopLogCollection(buildId);
-      
+
       // 선택적: 메모리에서 제거 (일정 시간 후)
       setTimeout(() => {
         this.buildLogs.delete(buildId);
-        this.logger.debug(`Removed cached logs for completed build: ${buildId}`);
+        this.logger.debug(
+          `Removed cached logs for completed build: ${buildId}`,
+        );
       }, 60000); // 1분 후 제거
     } catch (error) {
-      this.logger.error(`Error handling build completion for ${buildId}:`, error);
+      this.logger.error(
+        `Error handling build completion for ${buildId}:`,
+        error,
+      );
     }
   }
 
   /**
    * 빌드 메타데이터 조회
-   * 
+   *
    * 빌드의 상세 정보, 단계별 상태, 메트릭 등을 조회합니다.
-   * 
+   *
    * @param buildId - AWS CodeBuild ID
    * @returns 빌드 메타데이터
    */
@@ -1190,12 +1215,12 @@ export class LogsService implements OnModuleDestroy {
       else if (execStatus === 'PENDING') status = 'PENDING';
 
       // 5. 트리거 정보 추출 (build_spec에서)
-      const buildSpec = buildHistory.build_spec as any;
-      const envVars = buildHistory.environment_variables as any;
-      
+      const buildSpec = buildHistory.build_spec;
+      const envVars = buildHistory.environment_variables;
+
       let triggerType = 'Manual';
       let triggerAuthor = buildHistory.user_id;
-      
+
       // GitHub 트리거 감지
       if (envVars?.GITHUB_EVENT_NAME === 'push') {
         triggerType = 'GitHub Push';
@@ -1210,13 +1235,13 @@ export class LogsService implements OnModuleDestroy {
       };
 
       // 7. 단계별 정보 매핑
-      const phasesData = (phases || []).map(phase => ({
+      const phasesData = (phases || []).map((phase) => ({
         name: phase.phase_type,
         status: phase.phase_status,
         startTime: phase.phase_start_time,
         endTime: phase.phase_end_time,
-        duration: phase.phase_duration_seconds 
-          ? `${phase.phase_duration_seconds}s` 
+        duration: phase.phase_duration_seconds
+          ? `${phase.phase_duration_seconds}s`
           : undefined,
       }));
 
@@ -1260,14 +1285,17 @@ export class LogsService implements OnModuleDestroy {
         errorMessage: buildHistory.build_error_message,
       };
     } catch (error) {
-      this.logger.error(`Error retrieving build metadata for ${buildId}:`, error);
+      this.logger.error(
+        `Error retrieving build metadata for ${buildId}:`,
+        error,
+      );
       return null;
     }
   }
 
   /**
    * 로그 검색 기능 - 정규식과 컨텍스트 지원
-   * 
+   *
    * @param buildId - AWS CodeBuild ID
    * @param searchOptions - 검색 옵션
    * @returns 검색 결과와 컨텍스트
@@ -1302,13 +1330,13 @@ export class LogsService implements OnModuleDestroy {
     regex: boolean;
   }> {
     const startTime = Date.now();
-    
+
     // 통합 로그 가져오기 (전체)
     const unifiedLogs = await this.getUnifiedLogs(buildId, {
       limit: 999999, // 모든 로그
       offset: 0,
     });
-    
+
     if (!unifiedLogs.logs || unifiedLogs.logs.length === 0) {
       return {
         results: [],
@@ -1318,11 +1346,11 @@ export class LogsService implements OnModuleDestroy {
         regex: searchOptions.regex || false,
       };
     }
-    
+
     const results: Array<any> = [];
     const logs = unifiedLogs.logs;
     let searchPattern: RegExp | string;
-    
+
     // 검색 패턴 준비
     if (searchOptions.regex) {
       try {
@@ -1334,17 +1362,21 @@ export class LogsService implements OnModuleDestroy {
     } else {
       searchPattern = searchOptions.query.toLowerCase();
     }
-    
+
     // 로그 검색
     logs.forEach((log, index) => {
       // 레벨 필터링
       if (searchOptions.levels && searchOptions.levels.length > 0) {
         const normalized = normalizeLogEvent(log);
-        if (!searchOptions.levels.map(l => l.toUpperCase()).includes(normalized.level)) {
+        if (
+          !searchOptions.levels
+            .map((l) => l.toUpperCase())
+            .includes(normalized.level)
+        ) {
           return;
         }
       }
-      
+
       // 시간 범위 필터링
       if (searchOptions.timeRange) {
         const logTime = log.timestamp;
@@ -1357,16 +1389,18 @@ export class LogsService implements OnModuleDestroy {
           if (logTime > endTime) return;
         }
       }
-      
+
       // 검색 매칭
       let matches: Array<{ start: number; end: number }> = [];
       let isMatch = false;
-      
+
       if (searchPattern instanceof RegExp) {
-        const allMatches = [...log.message.matchAll(new RegExp(searchPattern.source, 'gi'))];
+        const allMatches = [
+          ...log.message.matchAll(new RegExp(searchPattern.source, 'gi')),
+        ];
         if (allMatches.length > 0) {
           isMatch = true;
-          matches = allMatches.map(match => ({
+          matches = allMatches.map((match) => ({
             start: match.index || 0,
             end: (match.index || 0) + match[0].length,
           }));
@@ -1376,13 +1410,15 @@ export class LogsService implements OnModuleDestroy {
         const searchIndex = lowerMessage.indexOf(searchPattern);
         if (searchIndex !== -1) {
           isMatch = true;
-          matches = [{
-            start: searchIndex,
-            end: searchIndex + searchOptions.query.length,
-          }];
+          matches = [
+            {
+              start: searchIndex,
+              end: searchIndex + searchOptions.query.length,
+            },
+          ];
         }
       }
-      
+
       if (isMatch) {
         const normalized = normalizeLogEvent(log);
         const result: any = {
@@ -1392,13 +1428,13 @@ export class LogsService implements OnModuleDestroy {
           message: log.message,
           matches,
         };
-        
+
         // 컨텍스트 추가
         if (searchOptions.includeContext) {
           const contextLines = searchOptions.contextLines || 3;
           const before: Array<{ lineNumber: number; message: string }> = [];
           const after: Array<{ lineNumber: number; message: string }> = [];
-          
+
           // 이전 컨텍스트
           for (let i = Math.max(0, index - contextLines); i < index; i++) {
             before.push({
@@ -1406,27 +1442,31 @@ export class LogsService implements OnModuleDestroy {
               message: logs[i].message,
             });
           }
-          
+
           // 이후 컨텍스트
-          for (let i = index + 1; i < Math.min(logs.length, index + contextLines + 1); i++) {
+          for (
+            let i = index + 1;
+            i < Math.min(logs.length, index + contextLines + 1);
+            i++
+          ) {
             after.push({
               lineNumber: i + 1,
               message: logs[i].message,
             });
           }
-          
+
           result.context = { before, after };
         }
-        
+
         results.push(result);
       }
     });
-    
+
     // 페이지네이션 적용
     const limit = searchOptions.limit || 100;
     const offset = searchOptions.offset || 0;
     const paginatedResults = results.slice(offset, offset + limit);
-    
+
     return {
       results: paginatedResults,
       totalMatches: results.length,
@@ -1434,5 +1474,607 @@ export class LogsService implements OnModuleDestroy {
       query: searchOptions.query,
       regex: searchOptions.regex || false,
     };
+  }
+
+  /**
+   * 빌드 분석 및 통계 조회
+   *
+   * 지정된 기간 동안의 빌드 통계, 트렌드, 에러 패턴, 성능 메트릭 등을 분석합니다.
+   *
+   * @param options - 분석 옵션 (projectId, userId, timeRange, groupBy)
+   * @returns 빌드 분석 결과
+   */
+  async getBuildAnalytics(options: {
+    projectId?: string;
+    userId?: string;
+    timeRange: '24h' | '7d' | '30d' | '90d';
+    groupBy: 'hour' | 'day' | 'week' | 'month';
+  }): Promise<{
+    summary: {
+      totalBuilds: number;
+      successCount: number;
+      failedCount: number;
+      successRate: number;
+      averageDuration: string;
+      totalLogLines: number;
+      totalErrors: number;
+      totalWarnings: number;
+    };
+    trends: Array<{
+      timestamp: string;
+      date: string;
+      successCount: number;
+      failedCount: number;
+      averageDuration: number;
+      totalBuilds: number;
+    }>;
+    errorPatterns: Array<{
+      pattern: string;
+      count: number;
+      percentage: number;
+      lastOccurrence: string;
+      affectedBuilds: string[];
+      examples: string[];
+    }>;
+    phaseMetrics: Array<{
+      phase: string;
+      totalExecutions: number;
+      averageDuration: string;
+      successRate: number;
+      failureRate: number;
+      commonErrors: string[];
+    }>;
+    durationDistribution: Array<{
+      range: string;
+      count: number;
+      percentage: number;
+    }>;
+    topProjects?: Array<{
+      projectId: string;
+      projectName?: string;
+      totalBuilds: number;
+      successRate: number;
+      averageDuration: string;
+      lastBuildTime: string;
+      trend: 'improving' | 'declining' | 'stable';
+    }>;
+    timeRange: {
+      start: string;
+      end: string;
+      type: string;
+    };
+    generatedAt: string;
+  }> {
+    try {
+      // 1. 시간 범위 계산
+      const now = new Date();
+      const timeRangeMap = {
+        '24h': 24 * 60 * 60 * 1000,
+        '7d': 7 * 24 * 60 * 60 * 1000,
+        '30d': 30 * 24 * 60 * 60 * 1000,
+        '90d': 90 * 24 * 60 * 60 * 1000,
+      };
+      const startTime = new Date(
+        now.getTime() - timeRangeMap[options.timeRange],
+      );
+
+      // 2. 기본 쿼리 빌드
+      let query = this.supabaseService
+        .getClient()
+        .from('build_histories')
+        .select(
+          `
+          *,
+          build_execution_phases(*)
+        `,
+        )
+        .gte('created_at', startTime.toISOString());
+
+      // 필터 적용
+      if (options.projectId) {
+        query = query.eq('project_id', options.projectId);
+      }
+      if (options.userId) {
+        query = query.eq('user_id', options.userId);
+      }
+
+      const { data: builds, error: buildsError } = await query;
+
+      if (buildsError) {
+        throw buildsError;
+      }
+
+      // 3. 아카이빙된 로그 메타데이터 조회
+      let archiveQuery = this.supabaseService
+        .getClient()
+        .from('log_archives')
+        .select('*')
+        .gte('created_at', startTime.toISOString());
+
+      if (options.projectId) {
+        archiveQuery = archiveQuery.eq('project_id', options.projectId);
+      }
+      if (options.userId) {
+        archiveQuery = archiveQuery.eq('user_id', options.userId);
+      }
+
+      const { data: archives } = await archiveQuery;
+
+      // 4. Summary 통계 계산
+      const totalBuilds = builds?.length || 0;
+      const successCount =
+        builds?.filter(
+          (b) => b.build_execution_status?.toUpperCase() === 'SUCCEEDED',
+        ).length || 0;
+      const failedCount =
+        builds?.filter(
+          (b) => b.build_execution_status?.toUpperCase() === 'FAILED',
+        ).length || 0;
+
+      const durations =
+        builds
+          ?.map((b) => {
+            if (b.build_start_time && b.build_end_time) {
+              return (
+                new Date(b.build_end_time).getTime() -
+                new Date(b.build_start_time).getTime()
+              );
+            }
+            return 0;
+          })
+          .filter((d) => d > 0) || [];
+
+      const avgDurationMs =
+        durations.length > 0
+          ? durations.reduce((a, b) => a + b, 0) / durations.length
+          : 0;
+
+      const totalLogLines =
+        archives?.reduce((sum, a) => {
+          const metadata = a.metadata;
+          return sum + (metadata?.totalLines || 0);
+        }, 0) || 0;
+
+      const totalErrors =
+        archives?.reduce((sum, a) => {
+          const metadata = a.metadata;
+          return sum + (metadata?.errorCount || 0);
+        }, 0) || 0;
+
+      const totalWarnings =
+        archives?.reduce((sum, a) => {
+          const metadata = a.metadata;
+          return sum + (metadata?.warningCount || 0);
+        }, 0) || 0;
+
+      // 5. 트렌드 데이터 생성
+      const trends = this.calculateTrends(builds || [], options.groupBy);
+
+      // 6. 에러 패턴 분석 (아카이빙된 로그에서)
+      const errorPatterns = await this.analyzeErrorPatterns(archives || []);
+
+      // 7. Phase 메트릭 계산
+      const phaseMetrics = this.calculatePhaseMetrics(builds || []);
+
+      // 8. Duration 분포 계산
+      const durationDistribution =
+        this.calculateDurationDistribution(durations);
+
+      // 9. 상위 프로젝트 분석 (projectId가 없을 때만)
+      const topProjects = !options.projectId
+        ? this.analyzeTopProjects(builds || [])
+        : undefined;
+
+      return {
+        summary: {
+          totalBuilds,
+          successCount,
+          failedCount,
+          successRate: totalBuilds > 0 ? (successCount / totalBuilds) * 100 : 0,
+          averageDuration: this.formatDuration(avgDurationMs),
+          totalLogLines,
+          totalErrors,
+          totalWarnings,
+        },
+        trends,
+        errorPatterns,
+        phaseMetrics,
+        durationDistribution,
+        topProjects,
+        timeRange: {
+          start: startTime.toISOString(),
+          end: now.toISOString(),
+          type: options.timeRange,
+        },
+        generatedAt: now.toISOString(),
+      };
+    } catch (error) {
+      this.logger.error('Error generating build analytics:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 트렌드 데이터 계산
+   */
+  private calculateTrends(
+    builds: any[],
+    groupBy: 'hour' | 'day' | 'week' | 'month',
+  ): Array<{
+    timestamp: string;
+    date: string;
+    successCount: number;
+    failedCount: number;
+    averageDuration: number;
+    totalBuilds: number;
+  }> {
+    const grouped = new Map<string, any[]>();
+
+    builds.forEach((build) => {
+      const date = new Date(build.created_at);
+      let key: string;
+
+      switch (groupBy) {
+        case 'hour':
+          key = `${date.toISOString().slice(0, 13)}:00:00Z`;
+          break;
+        case 'day':
+          key = date.toISOString().slice(0, 10);
+          break;
+        case 'week':
+          const weekStart = new Date(date);
+          weekStart.setDate(date.getDate() - date.getDay());
+          key = weekStart.toISOString().slice(0, 10);
+          break;
+        case 'month':
+          key = date.toISOString().slice(0, 7);
+          break;
+      }
+
+      if (!grouped.has(key)) {
+        grouped.set(key, []);
+      }
+      grouped.get(key)!.push(build);
+    });
+
+    return Array.from(grouped.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, builds]) => {
+        const successCount = builds.filter(
+          (b) => b.build_execution_status?.toUpperCase() === 'SUCCEEDED',
+        ).length;
+        const failedCount = builds.filter(
+          (b) => b.build_execution_status?.toUpperCase() === 'FAILED',
+        ).length;
+
+        const durations = builds
+          .map((b) => {
+            if (b.build_start_time && b.build_end_time) {
+              return (
+                new Date(b.build_end_time).getTime() -
+                new Date(b.build_start_time).getTime()
+              );
+            }
+            return 0;
+          })
+          .filter((d) => d > 0);
+
+        const avgDuration =
+          durations.length > 0
+            ? durations.reduce((a, b) => a + b, 0) / durations.length / 1000
+            : 0;
+
+        return {
+          timestamp: key,
+          date: key,
+          successCount,
+          failedCount,
+          averageDuration: Math.round(avgDuration),
+          totalBuilds: builds.length,
+        };
+      });
+  }
+
+  /**
+   * 에러 패턴 분석
+   */
+  private async analyzeErrorPatterns(archives: any[]): Promise<
+    Array<{
+      pattern: string;
+      count: number;
+      percentage: number;
+      lastOccurrence: string;
+      affectedBuilds: string[];
+      examples: string[];
+    }>
+  > {
+    const errorMap = new Map<
+      string,
+      {
+        count: number;
+        builds: Set<string>;
+        examples: Set<string>;
+        lastOccurrence: Date;
+      }
+    >();
+
+    // 일반적인 에러 패턴들
+    const patterns = [
+      { regex: /npm ERR!.*/, name: 'NPM Error' },
+      { regex: /Error:.*failed/, name: 'Build Failed' },
+      { regex: /Cannot find module.*/, name: 'Module Not Found' },
+      { regex: /SyntaxError:.*/, name: 'Syntax Error' },
+      { regex: /TypeError:.*/, name: 'Type Error' },
+      { regex: /ENOENT:.*/, name: 'File Not Found' },
+      { regex: /Permission denied.*/, name: 'Permission Denied' },
+      { regex: /timeout.*/, name: 'Timeout' },
+      { regex: /connection.*refused/i, name: 'Connection Refused' },
+      { regex: /out of memory/i, name: 'Out of Memory' },
+    ];
+
+    for (const archive of archives) {
+      const logs = archive.logs as any[];
+      if (!logs) continue;
+
+      logs.forEach((log) => {
+        if (typeof log.message === 'string') {
+          patterns.forEach(({ regex, name }) => {
+            if (regex.test(log.message)) {
+              if (!errorMap.has(name)) {
+                errorMap.set(name, {
+                  count: 0,
+                  builds: new Set(),
+                  examples: new Set(),
+                  lastOccurrence: new Date(archive.created_at),
+                });
+              }
+
+              const entry = errorMap.get(name)!;
+              entry.count++;
+              entry.builds.add(archive.build_history_id);
+              if (entry.examples.size < 3) {
+                entry.examples.add(log.message.slice(0, 200));
+              }
+              if (new Date(archive.created_at) > entry.lastOccurrence) {
+                entry.lastOccurrence = new Date(archive.created_at);
+              }
+            }
+          });
+        }
+      });
+    }
+
+    const totalErrors = Array.from(errorMap.values()).reduce(
+      (sum, e) => sum + e.count,
+      0,
+    );
+
+    return Array.from(errorMap.entries())
+      .map(([pattern, data]) => ({
+        pattern,
+        count: data.count,
+        percentage: totalErrors > 0 ? (data.count / totalErrors) * 100 : 0,
+        lastOccurrence: data.lastOccurrence.toISOString(),
+        affectedBuilds: Array.from(data.builds),
+        examples: Array.from(data.examples),
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  }
+
+  /**
+   * Phase 메트릭 계산
+   */
+  private calculatePhaseMetrics(builds: any[]): Array<{
+    phase: string;
+    totalExecutions: number;
+    averageDuration: string;
+    successRate: number;
+    failureRate: number;
+    commonErrors: string[];
+  }> {
+    const phaseMap = new Map<
+      string,
+      {
+        executions: number;
+        durations: number[];
+        successes: number;
+        failures: number;
+        errors: string[];
+      }
+    >();
+
+    builds.forEach((build) => {
+      const phases = build.build_execution_phases || [];
+      phases.forEach((phase: any) => {
+        const phaseName = phase.phase_name || 'UNKNOWN';
+
+        if (!phaseMap.has(phaseName)) {
+          phaseMap.set(phaseName, {
+            executions: 0,
+            durations: [],
+            successes: 0,
+            failures: 0,
+            errors: [],
+          });
+        }
+
+        const entry = phaseMap.get(phaseName)!;
+        entry.executions++;
+
+        if (phase.start_time && phase.end_time) {
+          const duration =
+            new Date(phase.end_time).getTime() -
+            new Date(phase.start_time).getTime();
+          entry.durations.push(duration);
+        }
+
+        if (phase.phase_status === 'SUCCEEDED') {
+          entry.successes++;
+        } else if (phase.phase_status === 'FAILED') {
+          entry.failures++;
+        }
+
+        if (phase.phase_context && phase.phase_context.message) {
+          entry.errors.push(phase.phase_context.message);
+        }
+      });
+    });
+
+    return Array.from(phaseMap.entries()).map(([phase, data]) => {
+      const avgDuration =
+        data.durations.length > 0
+          ? data.durations.reduce((a, b) => a + b, 0) / data.durations.length
+          : 0;
+
+      return {
+        phase,
+        totalExecutions: data.executions,
+        averageDuration: this.formatDuration(avgDuration),
+        successRate:
+          data.executions > 0 ? (data.successes / data.executions) * 100 : 0,
+        failureRate:
+          data.executions > 0 ? (data.failures / data.executions) * 100 : 0,
+        commonErrors: [...new Set(data.errors)].slice(0, 5),
+      };
+    });
+  }
+
+  /**
+   * Duration 분포 계산
+   */
+  private calculateDurationDistribution(durations: number[]): Array<{
+    range: string;
+    count: number;
+    percentage: number;
+  }> {
+    const ranges = [
+      { label: '0-1m', min: 0, max: 60000 },
+      { label: '1-5m', min: 60000, max: 300000 },
+      { label: '5-10m', min: 300000, max: 600000 },
+      { label: '10-30m', min: 600000, max: 1800000 },
+      { label: '30m+', min: 1800000, max: Infinity },
+    ];
+
+    const distribution = ranges.map((range) => {
+      const count = durations.filter(
+        (d) => d >= range.min && d < range.max,
+      ).length;
+      return {
+        range: range.label,
+        count,
+        percentage: durations.length > 0 ? (count / durations.length) * 100 : 0,
+      };
+    });
+
+    return distribution;
+  }
+
+  /**
+   * 상위 프로젝트 분석
+   */
+  private analyzeTopProjects(builds: any[]): Array<{
+    projectId: string;
+    projectName?: string;
+    totalBuilds: number;
+    successRate: number;
+    averageDuration: string;
+    lastBuildTime: string;
+    trend: 'improving' | 'declining' | 'stable';
+  }> {
+    const projectMap = new Map<string, any[]>();
+
+    builds.forEach((build) => {
+      const projectId = build.project_id || 'unknown';
+      if (!projectMap.has(projectId)) {
+        projectMap.set(projectId, []);
+      }
+      projectMap.get(projectId)!.push(build);
+    });
+
+    return Array.from(projectMap.entries())
+      .map(([projectId, projectBuilds]) => {
+        const successCount = projectBuilds.filter(
+          (b) => b.build_execution_status?.toUpperCase() === 'SUCCEEDED',
+        ).length;
+
+        const durations = projectBuilds
+          .map((b) => {
+            if (b.build_start_time && b.build_end_time) {
+              return (
+                new Date(b.build_end_time).getTime() -
+                new Date(b.build_start_time).getTime()
+              );
+            }
+            return 0;
+          })
+          .filter((d) => d > 0);
+
+        const avgDuration =
+          durations.length > 0
+            ? durations.reduce((a, b) => a + b, 0) / durations.length
+            : 0;
+
+        const lastBuild = projectBuilds.sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        )[0];
+
+        // 트렌드 계산 (최근 5개 빌드 기준)
+        const recentBuilds = projectBuilds
+          .sort(
+            (a, b) =>
+              new Date(b.created_at).getTime() -
+              new Date(a.created_at).getTime(),
+          )
+          .slice(0, 5);
+
+        let trend: 'improving' | 'declining' | 'stable' = 'stable';
+        if (recentBuilds.length >= 3) {
+          const recentSuccessRate =
+            recentBuilds.filter(
+              (b) => b.build_execution_status?.toUpperCase() === 'SUCCEEDED',
+            ).length / recentBuilds.length;
+
+          const overallSuccessRate = successCount / projectBuilds.length;
+
+          if (recentSuccessRate > overallSuccessRate + 0.1) {
+            trend = 'improving';
+          } else if (recentSuccessRate < overallSuccessRate - 0.1) {
+            trend = 'declining';
+          }
+        }
+
+        return {
+          projectId,
+          projectName: lastBuild.project_name,
+          totalBuilds: projectBuilds.length,
+          successRate: (successCount / projectBuilds.length) * 100,
+          averageDuration: this.formatDuration(avgDuration),
+          lastBuildTime: lastBuild.created_at,
+          trend,
+        };
+      })
+      .sort((a, b) => b.totalBuilds - a.totalBuilds)
+      .slice(0, 10);
+  }
+
+  /**
+   * Duration을 사람이 읽기 쉬운 형식으로 변환
+   */
+  private formatDuration(ms: number): string {
+    if (ms === 0) return '0s';
+
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (hours > 0) {
+      return `${hours}h ${minutes % 60}m`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds % 60}s`;
+    } else {
+      return `${seconds}s`;
+    }
   }
 }

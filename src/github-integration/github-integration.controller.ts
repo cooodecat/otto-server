@@ -25,8 +25,7 @@ export class GithubIntegrationController {
 
   constructor(
     private readonly githubIntegrationService: GithubIntegrationService,
-  ) { }
-
+  ) {}
 
   /**
    * @tag github-integration

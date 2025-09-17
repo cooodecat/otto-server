@@ -1,4 +1,12 @@
-import { IsOptional, IsNumber, IsArray, IsString, IsBoolean, IsEnum, Min } from 'class-validator';
+import {
+  IsOptional,
+  IsNumber,
+  IsArray,
+  IsString,
+  IsBoolean,
+  IsEnum,
+  Min,
+} from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
 export enum LogLevel {
@@ -36,7 +44,7 @@ export class GetUnifiedLogsDto {
   @IsOptional()
   @Transform(({ value }) => {
     if (typeof value === 'string') {
-      return value.split(',').map(v => v.trim().toUpperCase());
+      return value.split(',').map((v) => v.trim().toUpperCase());
     }
     return value;
   })
