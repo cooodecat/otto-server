@@ -1120,26 +1120,30 @@ export class CodeBuildService {
 
       this.logger.log(`[CodeBuildService] AWS CodeBuild API 호출 시작...`);
 
-      const result = await this.codeBuildClient.send(createProjectCommand);
+      const createProjectResult =
+        await this.codeBuildClient.send(createProjectCommand);
 
       this.logger.log(`[CodeBuildService] AWS CodeBuild API 호출 성공:`, {
-        projectArn: result.project?.arn,
-        projectName: result.project?.name,
+        projectArn: createProjectResult.project?.arn,
+        projectName: createProjectResult.project?.name,
       });
 
-      if (!result.project?.arn || !result.project?.name) {
+      if (
+        !createProjectResult.project?.arn ||
+        !createProjectResult.project?.name
+      ) {
         throw new Error(
           'CodeBuild 프로젝트 생성 실패: 프로젝트 정보가 누락되었습니다',
         );
       }
 
       this.logger.log(
-        `CodeBuild 프로젝트 생성 완료: ${result.project.name} (ARN: ${result.project.arn})`,
+        `CodeBuild 프로젝트 생성 완료: ${createProjectResult.project.name} (ARN: ${createProjectResult.project.arn})`,
       );
 
       return {
-        projectName: result.project.name,
-        projectArn: result.project.arn,
+        projectName: createProjectResult.project.name,
+        projectArn: createProjectResult.project.arn,
         logGroupName,
       };
     } catch (error) {

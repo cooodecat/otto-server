@@ -565,7 +565,9 @@ export class GithubIntegrationService {
         } catch (installationError) {
           this.logger.warn(
             `[getAllUserRepositories] Failed to fetch repos for installation ${installation.installation_id}:`,
-            installationError instanceof Error ? installationError.message : 'Unknown error',
+            installationError instanceof Error
+              ? installationError.message
+              : 'Unknown error',
           );
           // 개별 설치 실패 시 계속 진행
         }
