@@ -25,6 +25,14 @@ import {
   BuildStats,
 } from './types/build.types';
 import type { BuildPhase as AWSBuildPhase } from '@aws-sdk/client-codebuild';
+import type { Database } from '../types/database.types';
+
+// 데이터베이스 행 타입 정의
+type BuildHistoryRow = Database['public']['Tables']['build_histories']['Row'];
+type BuildHistoryUpdate =
+  Database['public']['Tables']['build_histories']['Update'];
+type BuildExecutionPhaseRow =
+  Database['public']['Tables']['build_execution_phases']['Row'];
 
 /**
  * CodeBuild 빌드 실행 이력 관리 서비스
@@ -90,6 +98,8 @@ export class BuildsService {
         duration_seconds: null,
         logs_url: null,
         build_error_message: null,
+        pipeline_id: request.pipelineId || null,
+        pipeline_data: request.pipelineData || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -112,8 +122,7 @@ export class BuildsService {
         `Build history saved: ${data.id} for AWS build ${request.awsBuildId}`,
       );
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      return this.mapDatabaseRowToBuildHistory(data);
+      return this.mapDatabaseRowToBuildHistory(data as BuildHistoryRow);
     } catch (error) {
       // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
       this.logger.error(`Failed to save build start: ${error}`);
@@ -134,29 +143,24 @@ export class BuildsService {
     updateData: UpdateBuildHistoryRequest,
   ): Promise<BuildHistory> {
     try {
-      const updatePayload: any = {
+      const updatePayload: Partial<BuildHistoryUpdate> = {
         updated_at: new Date().toISOString(),
       };
 
       // 업데이트 데이터 매핑
       if (updateData.buildExecutionStatus) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         updatePayload.build_execution_status = updateData.buildExecutionStatus;
       }
       if (updateData.endTime) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         updatePayload.end_time = updateData.endTime.toISOString();
       }
       if (updateData.durationSeconds !== undefined) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         updatePayload.duration_seconds = updateData.durationSeconds;
       }
       if (updateData.logsUrl) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         updatePayload.logs_url = updateData.logsUrl;
       }
       if (updateData.buildErrorMessage) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         updatePayload.build_error_message = updateData.buildErrorMessage;
       }
 
@@ -204,7 +208,7 @@ export class BuildsService {
         }
       }
 
-      return this.mapDatabaseRowToBuildHistory(data);
+      return this.mapDatabaseRowToBuildHistory(data as BuildHistoryRow);
     } catch (error) {
       this.logger.error(
         // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
@@ -395,7 +399,7 @@ export class BuildsService {
         throw new NotFoundException(`Build not found: ${buildId}`);
       }
 
-      return this.mapDatabaseRowToBuildHistory(data);
+      return this.mapDatabaseRowToBuildHistory(data as BuildHistoryRow);
     } catch (error) {
       this.logger.error(
         `Failed to get build details for ${buildId}: ${String(error)}`,
@@ -531,7 +535,7 @@ export class BuildsService {
         return null;
       }
 
-      return this.mapDatabaseRowToBuildHistory(data);
+      return this.mapDatabaseRowToBuildHistory(data as BuildHistoryRow);
     } catch (error) {
       this.logger.error(
         `Failed to get build by AWS ID ${awsBuildId}: ${String(error)}`,
@@ -674,20 +678,22 @@ export class BuildsService {
    * @param row - 데이터베이스 행
    * @returns BuildHistory 객체
    */
-  private mapDatabaseRowToBuildHistory(row: Record<string, any>): BuildHistory {
+  private mapDatabaseRowToBuildHistory(row: BuildHistoryRow): BuildHistory {
     return {
       id: row.id,
       userId: row.user_id,
       projectId: row.project_id,
       awsBuildId: row.aws_build_id,
       buildExecutionStatus: row.build_execution_status,
-      buildSpec: row.build_spec,
-      environmentVariables: row.environment_variables || undefined,
+      buildSpec: row.build_spec as object,
+      environmentVariables: row.environment_variables as
+        | Record<string, string>
+        | undefined,
       startTime: row.start_time ? new Date(row.start_time) : undefined,
       endTime: row.end_time ? new Date(row.end_time) : undefined,
-      durationSeconds: row.duration_seconds,
-      logsUrl: row.logs_url || undefined,
-      buildErrorMessage: row.build_error_message || undefined,
+      durationSeconds: row.duration_seconds ?? undefined,
+      logsUrl: row.logs_url ?? undefined,
+      buildErrorMessage: row.build_error_message ?? undefined,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };
@@ -701,7 +707,7 @@ export class BuildsService {
    * @returns BuildExecutionPhase 객체
    */
   private mapDatabaseRowToBuildExecutionPhase(
-    row: Record<string, any>,
+    row: BuildExecutionPhaseRow,
   ): BuildExecutionPhase {
     return {
       id: row.id,
@@ -714,8 +720,8 @@ export class BuildsService {
       phaseEndTime: row.phase_end_time
         ? new Date(row.phase_end_time)
         : undefined,
-      phaseDurationSeconds: row.phase_duration_seconds,
-      phaseContextMessage: row.phase_context_message || undefined,
+      phaseDurationSeconds: row.phase_duration_seconds ?? undefined,
+      phaseContextMessage: row.phase_context_message ?? undefined,
       createdAt: new Date(row.created_at),
     };
   }

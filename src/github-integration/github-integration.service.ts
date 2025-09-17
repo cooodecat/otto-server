@@ -41,7 +41,9 @@ export class GithubIntegrationService {
   private initializeGitHubApp(): void {
     try {
       const appId = this.configService.get<string>('OTTO_GITHUB_APP_ID');
-      const privateKeyRaw = this.configService.get<string>('OTTO_GITHUB_APP_PRIVATE_KEY');
+      const privateKeyRaw = this.configService.get<string>(
+        'OTTO_GITHUB_APP_PRIVATE_KEY',
+      );
 
       if (!appId || !privateKeyRaw) {
         this.logger.warn(
