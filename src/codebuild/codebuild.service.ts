@@ -7,6 +7,16 @@ import {
   CreateProjectCommand,
   DeleteProjectCommand,
 } from '@aws-sdk/client-codebuild';
+import {
+  S3Client,
+  CreateBucketCommand,
+  HeadBucketCommand,
+  DeleteBucketCommand,
+  ListObjectsV2Command,
+  DeleteObjectCommand,
+  ListObjectVersionsCommand,
+  DeleteObjectsCommand,
+} from '@aws-sdk/client-s3';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -262,6 +272,7 @@ export interface BuildSpecYaml {
 export class CodeBuildService {
   private readonly logger = new Logger(CodeBuildService.name);
   private readonly codeBuildClient: CodeBuildClient;
+  private readonly s3Client: S3Client;
 
   /**
    * CodeBuildService 생성자
@@ -335,6 +346,12 @@ export class CodeBuildService {
     });
 
     this.codeBuildClient = new CodeBuildClient({
+      region,
+      credentials,
+    });
+
+    // S3 클라이언트 초기화
+    this.s3Client = new S3Client({
       region,
       credentials,
     });
@@ -1039,6 +1056,479 @@ export class CodeBuildService {
   }
 
   /**
+   * S3 버킷을 생성하거나 확인합니다
+   *
+   * @param projectName 프로젝트 이름
+   * @returns 생성된 또는 기존 S3 버킷 이름
+   */
+  private async createOrGetS3Bucket(projectName: string): Promise<string> {
+    const bucketName = `codebuild-artifacts-${projectName.toLowerCase()}`;
+
+    try {
+      // 버킷 존재 확인
+      await this.s3Client.send(new HeadBucketCommand({ Bucket: bucketName }));
+      this.logger.log(
+        `[CodeBuildService] S3 버킷이 이미 존재합니다: ${bucketName}`,
+      );
+      return bucketName;
+    } catch (error: any) {
+      // 버킷이 존재하지 않으면 생성
+      if (
+        error.name === 'NotFound' ||
+        error.$metadata?.httpStatusCode === 404
+      ) {
+        try {
+          this.logger.log(`[CodeBuildService] S3 버킷 생성 중: ${bucketName}`);
+          await this.s3Client.send(
+            new CreateBucketCommand({ Bucket: bucketName }),
+          );
+          this.logger.log(
+            `[CodeBuildService] S3 버킷 생성 완료: ${bucketName}`,
+          );
+          return bucketName;
+        } catch (createError: any) {
+          this.logger.error(
+            `[CodeBuildService] S3 버킷 생성 실패: ${bucketName}`,
+            createError,
+          );
+          throw new Error(`Failed to create S3 bucket: ${createError.message}`);
+        }
+      } else {
+        this.logger.error(
+          `[CodeBuildService] S3 버킷 확인 실패: ${bucketName}`,
+          error,
+        );
+        throw new Error(`Failed to check S3 bucket: ${error.message}`);
+      }
+    }
+  }
+
+  /**
+   * S3 버킷 내 모든 객체를 삭제합니다 (강화된 로직)
+   *
+   * @param bucketName 버킷 이름
+   */
+  private async deleteAllObjectsInBucket(bucketName: string): Promise<void> {
+    let totalDeleted = 0;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      this.logger.log(
+        `[CodeBuildService] S3 객체 삭제 시도 ${attempts}/${maxAttempts}: ${bucketName}`,
+      );
+
+      try {
+        let continuationToken: string | undefined;
+        let hasMoreObjects = true;
+
+        while (hasMoreObjects) {
+          const listResponse = await this.s3Client.send(
+            new ListObjectsV2Command({
+              Bucket: bucketName,
+              ContinuationToken: continuationToken,
+              MaxKeys: 1000, // 한 번에 최대 1000개씩 처리
+            }),
+          );
+
+          if (listResponse.Contents && listResponse.Contents.length > 0) {
+            // DeleteObjectsCommand를 사용하여 배치 삭제 (최대 1000개씩)
+            const objectsToDelete = listResponse.Contents.map((object) => ({
+              Key: object.Key!,
+            }));
+
+            const deleteObjectsCommand = new DeleteObjectsCommand({
+              Bucket: bucketName,
+              Delete: {
+                Objects: objectsToDelete,
+                Quiet: false, // 삭제 결과를 반환받음
+              },
+            });
+
+            try {
+              const deleteResponse =
+                await this.s3Client.send(deleteObjectsCommand);
+              totalDeleted += listResponse.Contents.length;
+
+              this.logger.log(
+                `[CodeBuildService] S3 객체 ${listResponse.Contents.length}개 삭제 완료 (총 ${totalDeleted}개)`,
+              );
+
+              // 삭제 실패한 객체가 있는 경우 로그
+              if (deleteResponse.Errors && deleteResponse.Errors.length > 0) {
+                this.logger.warn(
+                  `[CodeBuildService] 일부 객체 삭제 실패: ${deleteResponse.Errors.length}개`,
+                  deleteResponse.Errors,
+                );
+              }
+            } catch (deleteError: any) {
+              this.logger.warn(
+                `[CodeBuildService] S3 객체 배치 삭제 실패: ${deleteError.message}`,
+              );
+              // 배치 삭제 실패 시 개별 삭제로 fallback
+              await this.deleteObjectsIndividually(bucketName, objectsToDelete);
+            }
+          }
+
+          continuationToken = listResponse.NextContinuationToken;
+          hasMoreObjects = !!continuationToken;
+        }
+
+        // 버전 관리된 객체들도 삭제
+        await this.deleteVersionedObjects(bucketName);
+
+        // 모든 객체 삭제 완료 확인
+        const finalCheck = await this.s3Client.send(
+          new ListObjectsV2Command({
+            Bucket: bucketName,
+            MaxKeys: 1,
+          }),
+        );
+
+        if (!finalCheck.Contents || finalCheck.Contents.length === 0) {
+          this.logger.log(
+            `[CodeBuildService] S3 버킷 내 모든 객체 삭제 완료 (총 ${totalDeleted}개)`,
+          );
+          return;
+        } else {
+          this.logger.warn(
+            `[CodeBuildService] 아직 삭제되지 않은 객체가 있습니다. 재시도 중...`,
+          );
+        }
+      } catch (listError: any) {
+        this.logger.error(
+          `[CodeBuildService] S3 객체 목록 조회 실패 (시도 ${attempts}/${maxAttempts}): ${listError.message}`,
+        );
+
+        if (attempts === maxAttempts) {
+          this.logger.warn(
+            `[CodeBuildService] S3 객체 삭제 최대 시도 횟수 초과. 버킷 삭제를 계속 진행합니다.`,
+          );
+          return;
+        }
+
+        // 재시도 전 잠시 대기
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempts));
+      }
+    }
+  }
+
+  /**
+   * S3 객체들을 개별적으로 삭제합니다 (fallback 메서드)
+   *
+   * @param bucketName 버킷 이름
+   * @param objectsToDelete 삭제할 객체 목록
+   */
+  private async deleteObjectsIndividually(
+    bucketName: string,
+    objectsToDelete: Array<{ Key: string }>,
+  ): Promise<void> {
+    this.logger.log(
+      `[CodeBuildService] 개별 객체 삭제 시작: ${objectsToDelete.length}개`,
+    );
+
+    for (const object of objectsToDelete) {
+      try {
+        await this.s3Client.send(
+          new DeleteObjectCommand({
+            Bucket: bucketName,
+            Key: object.Key,
+          }),
+        );
+      } catch (error: any) {
+        this.logger.warn(
+          `[CodeBuildService] 개별 객체 삭제 실패: ${object.Key} - ${error.message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * S3 버킷의 버전 관리된 객체들을 삭제합니다
+   *
+   * @param bucketName 버킷 이름
+   */
+  private async deleteVersionedObjects(bucketName: string): Promise<void> {
+    try {
+      this.logger.log(
+        `[CodeBuildService] 버전 관리된 객체 삭제 시작: ${bucketName}`,
+      );
+
+      let versionMarker: string | undefined;
+      let deleteMarkerMarker: string | undefined;
+      let totalDeleted = 0;
+
+      do {
+        const listVersionsResponse = await this.s3Client.send(
+          new ListObjectVersionsCommand({
+            Bucket: bucketName,
+            VersionIdMarker: versionMarker,
+            KeyMarker: deleteMarkerMarker,
+            MaxKeys: 1000,
+          }),
+        );
+
+        const objectsToDelete: Array<{ Key: string; VersionId?: string }> = [];
+
+        // 현재 버전 객체들 추가
+        if (listVersionsResponse.Versions) {
+          objectsToDelete.push(
+            ...listVersionsResponse.Versions.map((version) => ({
+              Key: version.Key!,
+              VersionId: version.VersionId,
+            })),
+          );
+        }
+
+        // 삭제 마커들 추가
+        if (listVersionsResponse.DeleteMarkers) {
+          objectsToDelete.push(
+            ...listVersionsResponse.DeleteMarkers.map((marker) => ({
+              Key: marker.Key!,
+              VersionId: marker.VersionId,
+            })),
+          );
+        }
+
+        // 배치 삭제 (최대 1000개씩)
+        if (objectsToDelete.length > 0) {
+          const deleteObjectsCommand = new DeleteObjectsCommand({
+            Bucket: bucketName,
+            Delete: {
+              Objects: objectsToDelete,
+              Quiet: false,
+            },
+          });
+
+          try {
+            await this.s3Client.send(deleteObjectsCommand);
+            totalDeleted += objectsToDelete.length;
+            this.logger.log(
+              `[CodeBuildService] 버전 관리된 객체 ${objectsToDelete.length}개 삭제 완료`,
+            );
+          } catch (deleteError: any) {
+            this.logger.warn(
+              `[CodeBuildService] 버전 관리된 객체 일부 삭제 실패: ${deleteError.message}`,
+            );
+          }
+        }
+
+        versionMarker = listVersionsResponse.NextVersionIdMarker;
+        deleteMarkerMarker = listVersionsResponse.NextKeyMarker;
+      } while (versionMarker || deleteMarkerMarker);
+
+      this.logger.log(
+        `[CodeBuildService] 버전 관리된 객체 삭제 완료 (총 ${totalDeleted}개)`,
+      );
+    } catch (error: any) {
+      this.logger.warn(
+        `[CodeBuildService] 버전 관리된 객체 삭제 실패: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * S3 버킷이 완전히 비어있는지 확인합니다
+   *
+   * @param bucketName 버킷 이름
+   * @returns 버킷이 비어있으면 true, 아니면 false
+   */
+  private async verifyBucketIsEmpty(bucketName: string): Promise<boolean> {
+    try {
+      // 일반 객체 확인
+      const listResponse = await this.s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: bucketName,
+          MaxKeys: 1,
+        }),
+      );
+
+      if (listResponse.Contents && listResponse.Contents.length > 0) {
+        this.logger.warn(
+          `[CodeBuildService] 일반 객체가 남아있음: ${listResponse.Contents.length}개`,
+        );
+        return false;
+      }
+
+      // 버전 관리된 객체 확인
+      const versionResponse = await this.s3Client.send(
+        new ListObjectVersionsCommand({
+          Bucket: bucketName,
+          MaxKeys: 1,
+        }),
+      );
+
+      if (
+        (versionResponse.Versions && versionResponse.Versions.length > 0) ||
+        (versionResponse.DeleteMarkers &&
+          versionResponse.DeleteMarkers.length > 0)
+      ) {
+        this.logger.warn(
+          `[CodeBuildService] 버전 관리된 객체가 남아있음: ${(versionResponse.Versions?.length || 0) + (versionResponse.DeleteMarkers?.length || 0)}개`,
+        );
+        return false;
+      }
+
+      this.logger.log(
+        `[CodeBuildService] S3 버킷이 완전히 비어있음: ${bucketName}`,
+      );
+      return true;
+    } catch (error: any) {
+      this.logger.error(
+        `[CodeBuildService] S3 버킷 비어있음 확인 실패: ${bucketName}`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * S3 버킷의 모든 객체를 강제로 삭제합니다
+   *
+   * @param bucketName 버킷 이름
+   */
+  private async forceDeleteAllObjects(bucketName: string): Promise<void> {
+    this.logger.log(`[CodeBuildService] 강제 객체 삭제 시작: ${bucketName}`);
+
+    // 1. 일반 객체 강제 삭제
+    let continuationToken: string | undefined;
+    do {
+      const listResponse = await this.s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: bucketName,
+          ContinuationToken: continuationToken,
+          MaxKeys: 1000,
+        }),
+      );
+
+      if (listResponse.Contents && listResponse.Contents.length > 0) {
+        const objectsToDelete = listResponse.Contents.map((object) => ({
+          Key: object.Key!,
+        }));
+
+        try {
+          await this.s3Client.send(
+            new DeleteObjectsCommand({
+              Bucket: bucketName,
+              Delete: {
+                Objects: objectsToDelete,
+                Quiet: true, // 에러만 반환
+              },
+            }),
+          );
+          this.logger.log(
+            `[CodeBuildService] 강제 삭제 완료: ${objectsToDelete.length}개`,
+          );
+        } catch (error: any) {
+          this.logger.warn(
+            `[CodeBuildService] 강제 삭제 실패: ${error.message}`,
+          );
+        }
+      }
+
+      continuationToken = listResponse.NextContinuationToken;
+    } while (continuationToken);
+
+    // 2. 버전 관리된 객체 강제 삭제
+    await this.deleteVersionedObjects(bucketName);
+
+    this.logger.log(`[CodeBuildService] 강제 객체 삭제 완료: ${bucketName}`);
+  }
+
+  /**
+   * S3 버킷을 삭제합니다
+   *
+   * @param projectName 프로젝트 이름
+   * @returns 삭제 성공 여부
+   */
+  private async deleteS3Bucket(projectName: string): Promise<boolean> {
+    const bucketName = `codebuild-artifacts-${projectName.toLowerCase()}`;
+
+    try {
+      // 버킷 존재 확인
+      await this.s3Client.send(new HeadBucketCommand({ Bucket: bucketName }));
+
+      this.logger.log(`[CodeBuildService] S3 버킷 삭제 시작: ${bucketName}`);
+
+      // 1. 버킷 내 모든 객체 삭제 (강화된 로직)
+      await this.deleteAllObjectsInBucket(bucketName);
+
+      // 2. 버킷이 완전히 비어있는지 최종 확인
+      const finalVerification = await this.verifyBucketIsEmpty(bucketName);
+      if (!finalVerification) {
+        this.logger.warn(
+          `[CodeBuildService] S3 버킷이 완전히 비어있지 않습니다. 강제로 객체를 다시 삭제합니다: ${bucketName}`,
+        );
+        // 강제로 모든 객체 다시 삭제
+        await this.forceDeleteAllObjects(bucketName);
+      }
+
+      // 3. 버킷 삭제 (재시도 로직 포함)
+      let bucketDeleteAttempts = 0;
+      const maxBucketDeleteAttempts = 3;
+
+      while (bucketDeleteAttempts < maxBucketDeleteAttempts) {
+        bucketDeleteAttempts++;
+
+        try {
+          await this.s3Client.send(
+            new DeleteBucketCommand({ Bucket: bucketName }),
+          );
+          this.logger.log(
+            `[CodeBuildService] S3 버킷 삭제 완료: ${bucketName}`,
+          );
+          return true;
+        } catch (deleteError: any) {
+          this.logger.warn(
+            `[CodeBuildService] S3 버킷 삭제 실패 (시도 ${bucketDeleteAttempts}/${maxBucketDeleteAttempts}): ${deleteError.message}`,
+          );
+
+          if (bucketDeleteAttempts === maxBucketDeleteAttempts) {
+            throw deleteError;
+          }
+
+          // 재시도 전 잠시 대기 (버킷이 비워지는 시간을 줌)
+          await new Promise((resolve) =>
+            setTimeout(resolve, 2000 * bucketDeleteAttempts),
+          );
+
+          // 재시도 전에 객체가 남아있는지 다시 확인
+          try {
+            await this.deleteAllObjectsInBucket(bucketName);
+          } catch (retryError: any) {
+            this.logger.warn(
+              `[CodeBuildService] 재시도 중 객체 삭제 실패: ${retryError.message}`,
+            );
+          }
+        }
+      }
+
+      // 모든 재시도가 실패한 경우
+      this.logger.error(
+        `[CodeBuildService] S3 버킷 삭제 최대 재시도 횟수 초과: ${bucketName}`,
+      );
+      return false;
+    } catch (error: any) {
+      if (
+        error.name === 'NoSuchBucket' ||
+        error.$metadata?.httpStatusCode === 404
+      ) {
+        this.logger.log(
+          `[CodeBuildService] S3 버킷이 이미 존재하지 않음: ${bucketName}`,
+        );
+        return true; // 이미 삭제된 것으로 간주
+      } else {
+        this.logger.error(
+          `[CodeBuildService] S3 버킷 삭제 실패: ${bucketName}`,
+          error,
+        );
+        return false;
+      }
+    }
+  }
+
+  /**
    * CodeBuild 프로젝트를 생성합니다
    *
    * 프로젝트 생성 시 자동으로 AWS CodeBuild 프로젝트를 생성합니다.
@@ -1093,15 +1583,17 @@ export class CodeBuildService {
         artifactsName,
       });
 
+      // S3 버킷 생성 또는 확인
+      const s3BucketName = await this.createOrGetS3Bucket(sanitizedProjectName);
+      this.logger.log(`[CodeBuildService] S3 버킷 준비 완료: ${s3BucketName}`);
+
       // AWS 설정
       const region =
         this.configService.get<string>('AWS_REGION') || 'ap-northeast-2';
       const codebuildServiceRole = this.configService.get<string>(
         'AWS_CODEBUILD_SERVICE_ROLE',
       );
-      const codebuildArtifactsBucket = this.configService.get<string>(
-        'CODEBUILD_ARTIFACTS_BUCKET',
-      );
+      const codebuildArtifactsBucket = s3BucketName; // 생성된 S3 버킷 사용
 
       this.logger.log(`[CodeBuildService] AWS 설정 확인:`, {
         region,
@@ -1113,9 +1605,9 @@ export class CodeBuildService {
           : '누락',
       });
 
-      if (!codebuildServiceRole || !codebuildArtifactsBucket) {
+      if (!codebuildServiceRole) {
         throw new Error(
-          'AWS CodeBuild 설정이 누락되었습니다: AWS_CODEBUILD_SERVICE_ROLE, CODEBUILD_ARTIFACTS_BUCKET',
+          'AWS CodeBuild 설정이 누락되었습니다: AWS_CODEBUILD_SERVICE_ROLE',
         );
       }
 
@@ -1217,6 +1709,33 @@ export class CodeBuildService {
         codebuildProjectName,
       });
 
+      // CodeBuild 프로젝트명에서 원본 프로젝트명 추출
+      // 형식: otto-{projectName}-{userId}
+      const projectNameMatch = codebuildProjectName.match(/^otto-(.+)-[^-]+$/);
+      const originalProjectName = projectNameMatch
+        ? projectNameMatch[1]
+        : codebuildProjectName;
+
+      // 1. S3 버킷 삭제 (실패해도 계속 진행)
+      try {
+        const s3Deleted = await this.deleteS3Bucket(originalProjectName);
+        if (s3Deleted) {
+          this.logger.log(
+            `[CodeBuildService] S3 버킷 삭제 성공: ${originalProjectName}`,
+          );
+        } else {
+          this.logger.warn(
+            `[CodeBuildService] S3 버킷 삭제 실패: ${originalProjectName}`,
+          );
+        }
+      } catch (s3Error) {
+        this.logger.warn(
+          `[CodeBuildService] S3 버킷 삭제 중 오류 발생 (계속 진행): ${originalProjectName}`,
+          s3Error,
+        );
+      }
+
+      // 2. CodeBuild 프로젝트 삭제
       const deleteProjectCommand = new DeleteProjectCommand({
         name: codebuildProjectName,
       });
