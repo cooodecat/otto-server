@@ -24,7 +24,42 @@ NestJS 기반 백엔드 서버 with Supabase (Auth + Database)
 2. **데이터베이스 스키마 생성**
    - SQL Editor에서 `supabase/migrations/001_create_profiles.sql` 실행
 
-### 2. 로컬 개발
+### 2. 환경변수 설정
+
+`.env` 파일을 생성하고 다음 환경변수들을 설정하세요:
+
+```bash
+# Database
+DATABASE_URL="postgresql://username:password@localhost:5432/otto_db"
+
+# Supabase
+SUPABASE_URL="https://your-project.supabase.co"
+SUPABASE_ANON_KEY="your-anon-key"
+SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
+
+# GitHub App
+OTTO_GITHUB_APP_ID="your-github-app-id"
+OTTO_GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nYOUR_PRIVATE_KEY_HERE\n-----END RSA PRIVATE KEY-----"
+
+# AWS
+AWS_REGION="ap-northeast-2"
+AWS_ACCESS_KEY_ID="your-access-key"
+AWS_SECRET_ACCESS_KEY="your-secret-key"
+AWS_SESSION_TOKEN="your-session-token" # Optional for temporary credentials
+AWS_CODEBUILD_SERVICE_ROLE="arn:aws:iam::account:role/CodeBuildServiceRole"
+CODEBUILD_ARTIFACTS_BUCKET="your-artifacts-bucket"
+
+# Frontend
+FRONTEND_URL="http://localhost:3000"
+
+# Server
+PORT=4000
+NODE_ENV="development"
+```
+
+**중요**: `OTTO_GITHUB_APP_PRIVATE_KEY`는 실제 개행문자(`\n`)를 포함해야 합니다. 환경변수에서는 `\\n`으로 이스케이프하거나, 실제 개행문자를 사용하세요.
+
+### 3. 로컬 개발
 
 ```bash
 # 저장소 클론

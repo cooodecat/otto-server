@@ -4,6 +4,7 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
 import { Octokit } from '@octokit/rest';
 import * as jwt from 'jsonwebtoken';
@@ -25,13 +26,16 @@ export class GithubIntegrationService {
   private readonly privateKey: string;
   private readonly frontendUrl: string;
 
-  constructor(private readonly supabaseService: SupabaseService) {
-    this.appId = process.env.OTTO_GITHUB_APP_ID || '';
-    this.privateKey = (process.env.OTTO_GITHUB_APP_PRIVATE_KEY || '').replace(
-      /\\n/g,
-      '\n',
-    );
-    this.frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly configService: ConfigService,
+  ) {
+    this.appId = this.configService.get<string>('OTTO_GITHUB_APP_ID') || '';
+    this.privateKey = (
+      this.configService.get<string>('OTTO_GITHUB_APP_PRIVATE_KEY') || ''
+    ).replace(/\\n/g, '\n');
+    this.frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
 
     if (!this.appId || !this.privateKey) {
       throw new Error('GitHub App credentials not configured');

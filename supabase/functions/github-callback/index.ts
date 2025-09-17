@@ -8,7 +8,7 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_ANON_KEY') ?? '',
 );
 
-const FRONTEND_URL = Deno.env.get('FRONTEND_URL') ?? 'http://localhost:3001';
+const FRONTEND_URL = Deno.env.get('FRONTEND_URL') ?? 'http://localhost:3000';
 
 // 모든 요청에 적용할 CORS
 const corsHeaders = {
