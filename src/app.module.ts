@@ -7,7 +7,10 @@ import { AuthModule } from './auth/auth.module';
 import { CodeBuildModule } from './codebuild/codebuild.module';
 import { BuildsModule } from './builds/builds.module';
 import { CloudWatchLogsModule } from './cloudwatch-logs/cloudwatch-logs.module';
+import { GithubIntegrationModule } from './github-integration/github-integration.module';
+import { ProjectsModule } from './projects/projects.module';
 import { LogsModule } from './logs/logs.module';
+import { PipelineModule } from './pipeline/pipeline.module';
 
 @Module({
   imports: [
@@ -37,7 +40,10 @@ import { LogsModule } from './logs/logs.module';
     BuildsModule,
     CodeBuildModule,
     CloudWatchLogsModule,
+    GithubIntegrationModule,
+    ProjectsModule,
     LogsModule,
+    PipelineModule,
   ],
   controllers: [AppController],
   providers: [AppService],
