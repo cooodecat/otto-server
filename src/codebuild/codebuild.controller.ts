@@ -276,10 +276,7 @@ export class CodeBuildController {
       }
 
       // 프로젝트 접근 권한이 없는 경우
-      if (
-        error instanceof HttpException &&
-        error.getStatus() === HttpStatus.NOT_FOUND
-      ) {
+      if (error instanceof HttpException && error.getStatus() === 404) {
         throw new HttpException(
           `Project not found or access denied: ${projectId}`,
           HttpStatus.NOT_FOUND,
