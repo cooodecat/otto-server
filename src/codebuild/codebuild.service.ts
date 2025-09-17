@@ -1191,28 +1191,35 @@ export class CodeBuildService {
           projectArn: createProjectResult.project.arn,
           logGroupName,
         };
-      } catch (createError: any) {
+      } catch (createError: unknown) {
         // 이미 존재하는 프로젝트인 경우 기존 프로젝트 정보 반환
-        if (createError.__type === 'ResourceAlreadyExistsException' || 
-            createError.name === 'ResourceAlreadyExistsException') {
+        const error = createError as { __type?: string; name?: string };
+        if (
+          error.__type === 'ResourceAlreadyExistsException' ||
+          error.name === 'ResourceAlreadyExistsException'
+        ) {
           this.logger.warn(
             `[CodeBuildService] CodeBuild 프로젝트가 이미 존재함: ${codebuildProjectName}`,
           );
-          
+
           // 기존 프로젝트 정보 조회
           try {
             const batchGetCommand = new BatchGetProjectsCommand({
               names: [codebuildProjectName],
             });
-            
-            const existingProject = await this.codeBuildClient.send(batchGetCommand);
-            
-            if (existingProject.projects && existingProject.projects.length > 0) {
+
+            const existingProject =
+              await this.codeBuildClient.send(batchGetCommand);
+
+            if (
+              existingProject.projects &&
+              existingProject.projects.length > 0
+            ) {
               const project = existingProject.projects[0];
               this.logger.log(
                 `[CodeBuildService] 기존 프로젝트 사용: ${project.name} (ARN: ${project.arn})`,
               );
-              
+
               // 기존 프로젝트의 소스 설정을 업데이트 (필요한 경우)
               const updateCommand = new UpdateProjectCommand({
                 name: codebuildProjectName,
@@ -1223,12 +1230,12 @@ export class CodeBuildService {
                 },
                 sourceVersion: `refs/heads/${selectedBranch}`,
               });
-              
+
               await this.codeBuildClient.send(updateCommand);
               this.logger.log(
                 `[CodeBuildService] 기존 프로젝트 소스 설정 업데이트 완료`,
               );
-              
+
               return {
                 projectName: project.name || codebuildProjectName,
                 projectArn: project.arn || '',
@@ -1242,7 +1249,7 @@ export class CodeBuildService {
             );
           }
         }
-        
+
         // 다른 오류의 경우 그대로 throw
         throw createError;
       }

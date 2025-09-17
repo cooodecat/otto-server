@@ -38,17 +38,6 @@ export class ProjectService {
         `[ProjectService] getUserProjects called for userId: ${userId}`,
       );
 
-      // 먼저 모든 프로젝트 조회 (디버깅용)
-      const { data: allProjects } = await this.supabaseService
-        .getClient()
-        .from('projects')
-        .select('project_id, name, user_id')
-        .limit(10);
-      
-      this.logger.log(
-        `[ProjectService] All projects in DB: ${JSON.stringify(allProjects)}`,
-      );
-
       // 사용자의 프로젝트 조회
       const { data: projects, error } = await this.supabaseService
         .getClient()
@@ -199,31 +188,21 @@ export class ProjectService {
       }
 
       // 1. 프로젝트 생성
-      this.logger.log(
-        `[ProjectService] Creating project with userId: ${userId}`,
-      );
-      
-      const projectData = {
-        name,
-        description,
-        github_owner: githubOwner,
-        github_repo_id: githubRepoId,
-        github_repo_name: githubRepoName,
-        github_repo_url: githubRepoUrl,
-        installation_id: installationId,
-        user_id: userId,
-        selected_branch: selectedBranch || 'main',
-        codebuild_status: 'PENDING',
-      };
-      
-      this.logger.log(
-        `[ProjectService] Project data to insert: ${JSON.stringify(projectData)}`,
-      );
-      
       const { data: project, error: projectError } = await this.supabaseService
         .getClient()
         .from('projects')
-        .insert(projectData)
+        .insert({
+          name,
+          description,
+          github_owner: githubOwner,
+          github_repo_id: githubRepoId,
+          github_repo_name: githubRepoName,
+          github_repo_url: githubRepoUrl,
+          installation_id: installationId,
+          user_id: userId,
+          selected_branch: selectedBranch || 'main',
+          codebuild_status: 'PENDING',
+        })
         .select()
         .single();
 
@@ -942,26 +921,20 @@ artifacts:
       .single();
 
     if (error) {
-      this.logger.error(
-        `Failed to create default pipeline: ${error.message}`,
-        {
-          projectId,
-          errorCode: error.code,
-          errorDetails: error.details,
-          errorHint: error.hint,
-        },
-      );
+      this.logger.error(`Failed to create default pipeline: ${error.message}`, {
+        projectId,
+        errorCode: error.code,
+        errorDetails: error.details,
+        errorHint: error.hint,
+      });
       throw new Error(`Failed to create default pipeline: ${error.message}`);
     }
 
     if (data) {
-      this.logger.log(
-        `Default pipeline created successfully:`,
-        {
-          pipelineId: data.pipeline_id,
-          projectId: data.project_id,
-        },
-      );
+      this.logger.log(`Default pipeline created successfully:`, {
+        pipelineId: data.pipeline_id,
+        projectId: data.project_id,
+      });
     }
 
     this.logger.log(

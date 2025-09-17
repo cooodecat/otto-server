@@ -11,6 +11,7 @@ import {
 import { createHmac } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { ConfigService } from '@nestjs/config';
+import type { GithubWebhookPayload, GithubRepository } from './types/webhook.types';
 
 @Controller('github')
 export class GithubWebhookController {
@@ -28,16 +29,22 @@ export class GithubWebhookController {
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   async handleWebhook(
-    @Body() payload: any,
+    @Body() payload: GithubWebhookPayload,
     @Headers('x-hub-signature-256') signature: string,
     @Headers('x-github-event') githubEvent: string,
   ) {
     this.logger.log(`[GitHub Webhook] Received event: ${githubEvent}`);
 
     // 서명 검증
-    const webhookSecret = this.configService.get<string>('OTTO_GITHUB_WEBHOOK_SECRET');
+    const webhookSecret = this.configService.get<string>(
+      'OTTO_GITHUB_WEBHOOK_SECRET',
+    );
     if (webhookSecret && signature) {
-      const isValid = this.verifyWebhookSignature(payload, signature, webhookSecret);
+      const isValid = this.verifyWebhookSignature(
+        payload,
+        signature,
+        webhookSecret,
+      );
       if (!isValid) {
         this.logger.error('[GitHub Webhook] Invalid signature');
         throw new BadRequestException('Invalid signature');
@@ -60,7 +67,9 @@ export class GithubWebhookController {
           await this.handlePullRequest(payload);
           break;
         default:
-          this.logger.log(`[GitHub Webhook] Unhandled event type: ${githubEvent}`);
+          this.logger.log(
+            `[GitHub Webhook] Unhandled event type: ${githubEvent}`,
+          );
       }
 
       return { status: 'ok' };
@@ -74,12 +83,13 @@ export class GithubWebhookController {
    * Webhook 서명 검증
    */
   private verifyWebhookSignature(
-    payload: any,
+    payload: GithubWebhookPayload,
     signature: string,
     secret: string,
   ): boolean {
     const hmac = createHmac('sha256', secret);
-    const digest = 'sha256=' + hmac.update(JSON.stringify(payload)).digest('hex');
+    const digest =
+      'sha256=' + hmac.update(JSON.stringify(payload)).digest('hex');
     return signature === digest;
   }
 
@@ -88,15 +98,22 @@ export class GithubWebhookController {
    * - created: 새로운 설치
    * - deleted: 설치 제거
    */
-  private async handleInstallation(payload: any) {
+  private async handleInstallation(payload: GithubWebhookPayload) {
     const { action, installation, sender } = payload;
-    
-    this.logger.log(`[GitHub Webhook] Installation ${action}: ${installation.id}`);
+
+    if (!installation || !sender) {
+      this.logger.warn('[GitHub Webhook] Missing installation or sender data');
+      return;
+    }
+
+    this.logger.log(
+      `[GitHub Webhook] Installation ${action}: ${installation.id}`,
+    );
 
     if (action === 'created') {
       // GitHub 사용자 정보로 Otto 사용자 찾기
       const client = this.supabase.getClient();
-      
+
       const { data: users, error: userError } = await client
         .from('users')
         .select('*')
@@ -146,9 +163,7 @@ export class GithubWebhookController {
           .eq('installation_id', String(installation.id));
       } else {
         // Create new
-        await client
-          .from('github_installations')
-          .insert(installationData);
+        await client.from('github_installations').insert(installationData);
       }
 
       this.logger.log(
@@ -165,7 +180,9 @@ export class GithubWebhookController {
         })
         .eq('installation_id', String(installation.id));
 
-      this.logger.log(`[GitHub Webhook] Installation deactivated: ${installation.id}`);
+      this.logger.log(
+        `[GitHub Webhook] Installation deactivated: ${installation.id}`,
+      );
     }
   }
 
@@ -174,9 +191,15 @@ export class GithubWebhookController {
    * - added: 저장소 추가
    * - removed: 저장소 제거
    */
-  private async handleInstallationRepositories(payload: any) {
-    const { action, installation, repositories_added, repositories_removed } = payload;
-    
+  private async handleInstallationRepositories(payload: GithubWebhookPayload) {
+    const { action, installation, repositories_added, repositories_removed } =
+      payload;
+
+    if (!installation) {
+      this.logger.warn('[GitHub Webhook] Missing installation data');
+      return;
+    }
+
     this.logger.log(
       `[GitHub Webhook] Installation repositories ${action} for installation: ${installation.id}`,
     );
@@ -184,7 +207,7 @@ export class GithubWebhookController {
     if (repositories_added && repositories_added.length > 0) {
       this.logger.log(
         `[GitHub Webhook] Repositories added: ${repositories_added
-          .map((r: any) => r.full_name)
+          .map((r: GithubRepository) => r.full_name)
           .join(', ')}`,
       );
       // 필요시 저장소 정보 저장
@@ -193,7 +216,7 @@ export class GithubWebhookController {
     if (repositories_removed && repositories_removed.length > 0) {
       this.logger.log(
         `[GitHub Webhook] Repositories removed: ${repositories_removed
-          .map((r: any) => r.full_name)
+          .map((r: GithubRepository) => r.full_name)
           .join(', ')}`,
       );
       // 필요시 저장소 정보 제거
@@ -203,9 +226,14 @@ export class GithubWebhookController {
   /**
    * Push 이벤트 처리
    */
-  private async handlePush(payload: any) {
+  private async handlePush(payload: GithubWebhookPayload) {
     const { repository, ref, pusher, commits } = payload;
-    
+
+    if (!repository || !pusher) {
+      this.logger.warn('[GitHub Webhook] Missing repository or pusher data');
+      return;
+    }
+
     this.logger.log(
       `[GitHub Webhook] Push to ${repository.full_name} on ${ref} by ${pusher.name}`,
     );
@@ -216,9 +244,14 @@ export class GithubWebhookController {
   /**
    * Pull Request 이벤트 처리
    */
-  private async handlePullRequest(payload: any) {
+  private async handlePullRequest(payload: GithubWebhookPayload) {
     const { action, pull_request, repository } = payload;
-    
+
+    if (!repository || !pull_request) {
+      this.logger.warn('[GitHub Webhook] Missing repository or pull_request data');
+      return;
+    }
+
     this.logger.log(
       `[GitHub Webhook] Pull request ${action} on ${repository.full_name}: #${pull_request.number}`,
     );

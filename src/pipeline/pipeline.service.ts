@@ -75,20 +75,20 @@ export class PipelineService {
     id: string,
     updatePipelineDto: UpdatePipelineDto,
   ): Promise<PipelineResponse> {
-    const updateData: any = {};
-    
+    const updateData: Record<string, unknown> = {};
+
     if (updatePipelineDto.name !== undefined) {
       updateData.name = updatePipelineDto.name;
     }
-    
+
     if (updatePipelineDto.flowData !== undefined) {
       updateData.data = updatePipelineDto.flowData;
     }
-    
+
     if (updatePipelineDto.env !== undefined) {
       updateData.env = updatePipelineDto.env;
     }
-    
+
     const { data, error } = await this.supabaseService
       .getClient()
       .from('pipeline')
@@ -123,11 +123,19 @@ export class PipelineService {
     }
   }
 
-  private mapToResponse(pipeline: any): PipelineResponse {
+  private mapToResponse(pipeline: {
+    pipeline_id: string;
+    project_id: string;
+    name?: string;
+    data: { nodes: unknown[]; edges: unknown[] };
+    created_at: string;
+  }): PipelineResponse {
     return {
       id: pipeline.pipeline_id,
       projectId: pipeline.project_id,
-      name: pipeline.name || `Pipeline ${new Date(pipeline.created_at).toLocaleString()}`, // DB의 name 필드 사용
+      name:
+        pipeline.name ||
+        `Pipeline ${new Date(pipeline.created_at).toLocaleString()}`, // DB의 name 필드 사용
       description: 'Pipeline created from dashboard', // 기존 스키마에 description 필드가 없어서 기본값
       flowData: pipeline.data,
       isActive: true, // 기존 스키마에 isActive 필드가 없어서 기본값
