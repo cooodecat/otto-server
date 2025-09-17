@@ -5,6 +5,7 @@ import {
   StartBuildCommand,
   BatchGetBuildsCommand,
   CreateProjectCommand,
+  CreateProjectCommandOutput,
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
@@ -1126,6 +1127,8 @@ export class CodeBuildService {
         projectArn: result.project?.arn,
         projectName: result.project?.name,
       });
+
+      const result = await this.codeBuildClient.send(createProjectCommand);
 
       if (!result.project?.arn || !result.project?.name) {
         throw new Error(

@@ -8,7 +8,7 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_ANON_KEY') ?? '',
 );
 
-const FRONTEND_URL = Deno.env.get('FRONTEND_URL') ?? 'http://localhost:3001'
+const FRONTEND_URL = Deno.env.get('FRONTEND_URL') ?? 'http://localhost:3001';
 
 // 모든 요청에 적용할 CORS
 const corsHeaders = {
@@ -21,14 +21,14 @@ const corsHeaders = {
 async function createJWT(appId: string, privateKey: string): Promise<string> {
   const header = {
     alg: 'RS256',
-    typ: 'JWT'
+    typ: 'JWT',
   };
 
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iat: now - 60, // 1분 전 (clock skew 대응)
-    exp: now + (10 * 60), // 10분 후
-    iss: appId
+    exp: now + 10 * 60, // 10분 후
+    iss: appId,
   };
 
   // Base64 URL 인코딩
@@ -65,7 +65,7 @@ async function createJWT(appId: string, privateKey: string): Promise<string> {
       throw new Error('Unsupported private key format');
     }
 
-    const binaryKey = Uint8Array.from(atob(keyData), c => c.charCodeAt(0));
+    const binaryKey = Uint8Array.from(atob(keyData), (c) => c.charCodeAt(0));
 
     // PKCS#8 형식으로 import
     const cryptoKey = await crypto.subtle.importKey(
@@ -76,14 +76,14 @@ async function createJWT(appId: string, privateKey: string): Promise<string> {
         hash: 'SHA-256',
       },
       false,
-      ['sign']
+      ['sign'],
     );
 
     // 서명 생성
     const signature = await crypto.subtle.sign(
       'RSASSA-PKCS1-v1_5',
       cryptoKey,
-      encoder.encode(data)
+      encoder.encode(data),
     );
 
     const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
@@ -104,7 +104,9 @@ async function createJWT(appId: string, privateKey: string): Promise<string> {
 
 // GitHub 설치 정보 가져오기 (직접 API 호출)
 async function getGitHubInstallationInfo(installationId: string) {
-  console.log(`[GitHub API] ========== STARTING INSTALLATION INFO RETRIEVAL ==========`);
+  console.log(
+    `[GitHub API] ========== STARTING INSTALLATION INFO RETRIEVAL ==========`,
+  );
   console.log(`[GitHub API] Installation ID: ${installationId}`);
 
   try {
@@ -113,24 +115,36 @@ async function getGitHubInstallationInfo(installationId: string) {
     const privateKeyRaw = Deno.env.get('OTTO_GITHUB_APP_PRIVATE_KEY');
 
     console.log(`[GitHub API] Environment check:`);
-    console.log(`[GitHub API] - OTTO_GITHUB_APP_ID: ${appId ? `Found (${appId})` : 'MISSING'}`);
-    console.log(`[GitHub API] - OTTO_GITHUB_APP_PRIVATE_KEY: ${privateKeyRaw ? `Found (${privateKeyRaw.length} chars)` : 'MISSING'}`);
+    console.log(
+      `[GitHub API] - OTTO_GITHUB_APP_ID: ${appId ? `Found (${appId})` : 'MISSING'}`,
+    );
+    console.log(
+      `[GitHub API] - OTTO_GITHUB_APP_PRIVATE_KEY: ${privateKeyRaw ? `Found (${privateKeyRaw.length} chars)` : 'MISSING'}`,
+    );
 
     if (!appId) {
-      console.error(`[GitHub API] CRITICAL: OTTO_GITHUB_APP_ID is missing from Supabase Functions environment!`);
+      console.error(
+        `[GitHub API] CRITICAL: OTTO_GITHUB_APP_ID is missing from Supabase Functions environment!`,
+      );
       return null;
     }
 
     if (!privateKeyRaw) {
-      console.error(`[GitHub API] CRITICAL: OTTO_GITHUB_APP_PRIVATE_KEY is missing from Supabase Functions environment!`);
+      console.error(
+        `[GitHub API] CRITICAL: OTTO_GITHUB_APP_PRIVATE_KEY is missing from Supabase Functions environment!`,
+      );
       return null;
     }
 
     const privateKey = privateKeyRaw.replace(/\\n/g, '\n');
-    console.log(`[GitHub API] Private key processed. Length: ${privateKey.length} chars`);
+    console.log(
+      `[GitHub API] Private key processed. Length: ${privateKey.length} chars`,
+    );
 
     const installationIdNum = parseInt(installationId, 10);
-    console.log(`[GitHub API] Parsed installation ID as number: ${installationIdNum}`);
+    console.log(
+      `[GitHub API] Parsed installation ID as number: ${installationIdNum}`,
+    );
 
     // JWT 토큰 생성
     console.log(`[GitHub API] Creating JWT token...`);
@@ -141,56 +155,75 @@ async function getGitHubInstallationInfo(installationId: string) {
     try {
       console.log(`[GitHub API] Method 1: Calling GitHub Apps API directly...`);
 
-      const response = await fetch(`https://api.github.com/app/installations/${installationIdNum}`, {
-        headers: {
-          'Authorization': `Bearer ${jwtToken}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'Otto-GitHub-App/1.0'
-        }
-      });
+      const response = await fetch(
+        `https://api.github.com/app/installations/${installationIdNum}`,
+        {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            Accept: 'application/vnd.github.v3+json',
+            'User-Agent': 'Otto-GitHub-App/1.0',
+          },
+        },
+      );
 
-      console.log(`[GitHub API] GitHub API response status: ${response.status}`);
+      console.log(
+        `[GitHub API] GitHub API response status: ${response.status}`,
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`[GitHub API] GitHub API error: ${response.status} ${response.statusText}`);
+        console.error(
+          `[GitHub API] GitHub API error: ${response.status} ${response.statusText}`,
+        );
         console.error(`[GitHub API] Error response body: ${errorText}`);
-        throw new Error(`GitHub API responded with ${response.status}: ${response.statusText}`);
+        throw new Error(
+          `GitHub API responded with ${response.status}: ${response.statusText}`,
+        );
       }
 
       const installationData = await response.json();
-      console.log(`[GitHub API] Method 1 SUCCESS: Got installation data via direct API call`);
-      console.log(`[GitHub API] Installation data:`, JSON.stringify(installationData, null, 2));
+      console.log(
+        `[GitHub API] Method 1 SUCCESS: Got installation data via direct API call`,
+      );
+      console.log(
+        `[GitHub API] Installation data:`,
+        JSON.stringify(installationData, null, 2),
+      );
 
       const result = {
         account_id: installationData.account.id.toString(),
         account_login: installationData.account.login,
         account_type: installationData.account.type,
-        account_avatar_url: installationData.account.avatar_url || ''
+        account_avatar_url: installationData.account.avatar_url || '',
       };
 
-      console.log(`[GitHub API] ========== SUCCESS: Installation info retrieved ==========`);
+      console.log(
+        `[GitHub API] ========== SUCCESS: Installation info retrieved ==========`,
+      );
       console.log(`[GitHub API] Result:`, JSON.stringify(result, null, 2));
       return result;
-
     } catch (fetchError) {
       console.error(`[GitHub API] Method 1 FAILED:`, fetchError.message);
 
       // 방법 2: 최후의 수단 - 더미 데이터로 진행 (개발 중에만)
-      console.log(`[GitHub API] Method 2: Using fallback dummy data for development...`);
+      console.log(
+        `[GitHub API] Method 2: Using fallback dummy data for development...`,
+      );
 
       const dummyResult = {
         account_id: `${installationIdNum}`,
         account_login: `user_${installationIdNum}`,
         account_type: 'User',
-        account_avatar_url: 'https://github.com/github.png'
+        account_avatar_url: 'https://github.com/github.png',
       };
 
       console.log(`[GitHub API] Method 2 SUCCESS: Using dummy data to proceed`);
-      console.log(`[GitHub API] Dummy result:`, JSON.stringify(dummyResult, null, 2));
+      console.log(
+        `[GitHub API] Dummy result:`,
+        JSON.stringify(dummyResult, null, 2),
+      );
       return dummyResult;
     }
-
   } catch (error) {
     console.error(`[GitHub API] ========== ERROR OCCURRED ==========`);
     console.error(`[GitHub API] Error type: ${error.constructor.name}`);
@@ -211,7 +244,10 @@ async function handleGithubCallback(
   setupAction: string,
 ) {
   if (!state) {
-    return { url: `${FRONTEND_URL}/projects?status=error&reason=missing_state`, statusCode: 302 };
+    return {
+      url: `${FRONTEND_URL}/projects?status=error&reason=missing_state`,
+      statusCode: 302,
+    };
   }
 
   let userId, returnUrl;
@@ -221,30 +257,48 @@ async function handleGithubCallback(
     // GitHub 설치 후에는 무조건 /projects로 리다이렉트
     returnUrl = '/projects';
   } catch {
-    return { url: `${FRONTEND_URL}/projects?status=error&reason=invalid_state`, statusCode: 302 };
+    return {
+      url: `${FRONTEND_URL}/projects?status=error&reason=invalid_state`,
+      statusCode: 302,
+    };
   }
 
   if (!installationId) {
-    return { url: `${FRONTEND_URL}${returnUrl}?status=error&reason=missing_installation_id`, statusCode: 302 };
+    return {
+      url: `${FRONTEND_URL}${returnUrl}?status=error&reason=missing_installation_id`,
+      statusCode: 302,
+    };
   }
 
   // setup_action이 install이 아니면 무시
   if (setupAction !== 'install') {
     console.log('Setup action is not install, ignoring:', setupAction);
-    return { url: `${FRONTEND_URL}${returnUrl}?status=error&reason=invalid_setup_action`, statusCode: 302 };
+    return {
+      url: `${FRONTEND_URL}${returnUrl}?status=error&reason=invalid_setup_action`,
+      statusCode: 302,
+    };
   }
 
-  console.log(`[GitHub Callback] Processing installation ${installationId} for user ${userId}`);
+  console.log(
+    `[GitHub Callback] Processing installation ${installationId} for user ${userId}`,
+  );
 
   // GitHub API로 실제 설치 정보 가져오기
   const installationInfo = await getGitHubInstallationInfo(installationId);
 
   if (!installationInfo) {
-    console.error(`[GitHub Callback] Failed to get installation info for: ${installationId}`);
-    return { url: `${FRONTEND_URL}${returnUrl}?status=error&reason=github_api_failed`, statusCode: 302 };
+    console.error(
+      `[GitHub Callback] Failed to get installation info for: ${installationId}`,
+    );
+    return {
+      url: `${FRONTEND_URL}${returnUrl}?status=error&reason=github_api_failed`,
+      statusCode: 302,
+    };
   }
 
-  console.log(`[GitHub Callback] Installation info retrieved for: ${installationInfo.account_login}`);
+  console.log(
+    `[GitHub Callback] Installation info retrieved for: ${installationInfo.account_login}`,
+  );
 
   // 먼저 기존 설치가 있는지 확인
   const { data: existingInstallation } = await supabase
@@ -298,10 +352,15 @@ async function handleGithubCallback(
 
   if (error) {
     console.error('[GitHub Callback] Database error:', error);
-    return { url: `${FRONTEND_URL}${returnUrl}?status=error&reason=installation_failed`, statusCode: 302 };
+    return {
+      url: `${FRONTEND_URL}${returnUrl}?status=error&reason=installation_failed`,
+      statusCode: 302,
+    };
   }
 
-  console.log(`[GitHub Callback] Installation registered: ${installationInfo.account_login}`);
+  console.log(
+    `[GitHub Callback] Installation registered: ${installationInfo.account_login}`,
+  );
 
   const redirectUrl = `${FRONTEND_URL}${returnUrl}?status=success&installation_id=${encodeURIComponent(
     installationId,
@@ -332,9 +391,16 @@ serve(async (req) => {
     const code = url.searchParams.get('code') || '';
     const setupAction = url.searchParams.get('setup_action') || '';
 
-    console.log(`[GitHub Callback] Received: ${method} ${path} - Installation: ${installationId}`);
+    console.log(
+      `[GitHub Callback] Received: ${method} ${path} - Installation: ${installationId}`,
+    );
 
-    const result = await handleGithubCallback(installationId, state, code, setupAction);
+    const result = await handleGithubCallback(
+      installationId,
+      state,
+      code,
+      setupAction,
+    );
 
     return new Response(null, {
       status: result.statusCode,
