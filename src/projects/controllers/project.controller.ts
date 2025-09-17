@@ -85,6 +85,9 @@ export class ProjectController {
     @Body() body: CreateProjectWithGithubRequest,
   ): Promise<CreateProjectWithGithubResponse> {
     try {
+      this.logger.log(`[Project Controller] 프로젝트 생성 요청 받음: userId=${req.user.id}, projectName=${body.name}`);
+      this.logger.log(`[Project Controller] 요청 데이터:`, JSON.stringify(body, null, 2));
+
       return await this.projectService.createProjectWithGithub(
         req.user.id,
         body,
