@@ -34,14 +34,34 @@ export class ProjectService {
    */
   async getUserProjects(userId: string): Promise<ProjectsResponse> {
     try {
-      this.logger.log(`[ProjectService] getUserProjects called for userId: ${userId}`);
+      this.logger.log(
+        `[ProjectService] Fetching projects for userId: ${userId}`,
+      );
 
+      // 먼저 모든 프로젝트를 확인 (디버깅용)
+      const { data: allProjects } = await this.supabaseService
+        .getClient()
+        .from('projects')
+        .select('project_id, name, user_id');
+
+      this.logger.log(
+        `[ProjectService] Total projects in DB: ${allProjects?.length || 0}`,
+      );
+
+      if (allProjects && allProjects.length > 0) {
+        this.logger.log(
+          `[ProjectService] All project user_ids: ${allProjects.map((p) => p.user_id).join(', ')}`,
+        );
+      }
+
+      // 사용자의 프로젝트 조회
       const { data: projects, error } = await this.supabaseService
         .getClient()
         .from('projects')
         .select(
           `
           project_id,
+          user_id,
           name,
           description,
           github_owner,
@@ -64,7 +84,16 @@ export class ProjectService {
         throw new BadRequestException('Failed to fetch projects');
       }
 
-      this.logger.log(`[ProjectService] Found ${projects?.length || 0} projects for userId: ${userId}`);
+      this.logger.log(
+        `[ProjectService] Found ${projects?.length || 0} projects for userId: ${userId}`,
+      );
+
+      // userId가 일치하지 않는 경우를 위한 추가 로그
+      if (projects?.length === 0 && allProjects && allProjects.length > 0) {
+        this.logger.warn(
+          `[ProjectService] No projects found for userId: ${userId}, but there are ${allProjects.length} projects in DB`,
+        );
+      }
 
       const typedProjects = this.validateProjects(projects);
 
@@ -92,6 +121,7 @@ export class ProjectService {
         .select(
           `
           project_id,
+          user_id,
           name,
           description,
           github_owner,
@@ -329,10 +359,11 @@ export class ProjectService {
     projectId: string,
   ): Promise<DeleteProjectResponse> {
     try {
+      // 프로젝트 정보 조회 (CodeBuild 프로젝트명 포함)
       const { data: project, error } = await this.supabaseService
         .getClient()
         .from('projects')
-        .select('project_id')
+        .select('project_id, codebuild_project_name')
         .eq('user_id', userId)
         .eq('project_id', projectId)
         .single();
@@ -341,6 +372,29 @@ export class ProjectService {
         throw new NotFoundException('Project not found');
       }
 
+      // CodeBuild 프로젝트 삭제 (실패해도 계속 진행)
+      if (project.codebuild_project_name) {
+        try {
+          this.logger.log(
+            `Deleting CodeBuild project: ${project.codebuild_project_name}`,
+          );
+          await this.codebuildService.deleteCodeBuildProject(
+            project.codebuild_project_name,
+          );
+        } catch (codebuildError) {
+          // CodeBuild 삭제 실패는 로그만 남기고 계속 진행
+          this.logger.warn(
+            `Failed to delete CodeBuild project ${project.codebuild_project_name}, continuing with database deletion:`,
+            codebuildError,
+          );
+        }
+      } else {
+        this.logger.log(
+          'No CodeBuild project name found, skipping CodeBuild deletion',
+        );
+      }
+
+      // 데이터베이스에서 프로젝트 삭제
       const { error: deleteError } = await this.supabaseService
         .getClient()
         .from('projects')
