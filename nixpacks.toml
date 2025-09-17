@@ -1,0 +1,14 @@
+# nixpacks configuration for Railway deployment
+# Explicitly define this as a Node.js project, not Deno
+
+[phases.setup]
+nixPkgs = ["nodejs_22", "pnpm-10_x"]
+
+[phases.install]
+cmds = ["pnpm install --frozen-lockfile"]
+
+[phases.build]
+cmds = ["pnpm run build"]
+
+[start]
+cmd = "pnpm run start:prod"
