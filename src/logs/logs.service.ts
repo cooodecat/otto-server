@@ -3,6 +3,7 @@ import { CloudWatchLogsService } from '../cloudwatch-logs/cloudwatch-logs.servic
 import { RawLogEntry } from '../cloudwatch-logs/types/cloudwatch.types';
 import { CodeBuildService } from '../codebuild/codebuild.service';
 import { SupabaseService } from '../supabase/supabase.service';
+import { TimeRangeType } from './dto/analytics.dto';
 
 /**
  * CloudWatch Logs API에서 가져온 단일 로그 이벤트를 나타냅니다
@@ -1487,7 +1488,7 @@ export class LogsService implements OnModuleDestroy {
   async getBuildAnalytics(options: {
     projectId?: string;
     userId?: string;
-    timeRange: '24h' | '7d' | '30d' | '90d';
+    timeRange: TimeRangeType;
     groupBy: 'hour' | 'day' | 'week' | 'month';
   }): Promise<{
     summary: {
@@ -1541,7 +1542,7 @@ export class LogsService implements OnModuleDestroy {
     timeRange: {
       start: string;
       end: string;
-      type: string;
+      type: TimeRangeType;
     };
     generatedAt: string;
   }> {
@@ -1549,10 +1550,10 @@ export class LogsService implements OnModuleDestroy {
       // 1. 시간 범위 계산
       const now = new Date();
       const timeRangeMap = {
-        '24h': 24 * 60 * 60 * 1000,
-        '7d': 7 * 24 * 60 * 60 * 1000,
-        '30d': 30 * 24 * 60 * 60 * 1000,
-        '90d': 90 * 24 * 60 * 60 * 1000,
+        [TimeRangeType.TWENTY_FOUR_HOURS]: 24 * 60 * 60 * 1000,
+        [TimeRangeType.SEVEN_DAYS]: 7 * 24 * 60 * 60 * 1000,
+        [TimeRangeType.THIRTY_DAYS]: 30 * 24 * 60 * 60 * 1000,
+        [TimeRangeType.NINETY_DAYS]: 90 * 24 * 60 * 60 * 1000,
       };
       const startTime = new Date(
         now.getTime() - timeRangeMap[options.timeRange],
@@ -1651,7 +1652,7 @@ export class LogsService implements OnModuleDestroy {
       const trends = this.calculateTrends(builds || [], options.groupBy);
 
       // 6. 에러 패턴 분석 (아카이빙된 로그에서)
-      const errorPatterns = await this.analyzeErrorPatterns(archives || []);
+      const errorPatterns = this.analyzeErrorPatterns(archives || []);
 
       // 7. Phase 메트릭 계산
       const phaseMetrics = this.calculatePhaseMetrics(builds || []);
@@ -1721,11 +1722,12 @@ export class LogsService implements OnModuleDestroy {
         case 'day':
           key = date.toISOString().slice(0, 10);
           break;
-        case 'week':
+        case 'week': {
           const weekStart = new Date(date);
           weekStart.setDate(date.getDate() - date.getDay());
           key = weekStart.toISOString().slice(0, 10);
           break;
+        }
         case 'month':
           key = date.toISOString().slice(0, 7);
           break;
@@ -1778,16 +1780,14 @@ export class LogsService implements OnModuleDestroy {
   /**
    * 에러 패턴 분석
    */
-  private async analyzeErrorPatterns(archives: any[]): Promise<
-    Array<{
-      pattern: string;
-      count: number;
-      percentage: number;
-      lastOccurrence: string;
-      affectedBuilds: string[];
-      examples: string[];
-    }>
-  > {
+  private analyzeErrorPatterns(archives: any[]): Array<{
+    pattern: string;
+    count: number;
+    percentage: number;
+    lastOccurrence: string;
+    affectedBuilds: string[];
+    examples: string[];
+  }> {
     const errorMap = new Map<
       string,
       {

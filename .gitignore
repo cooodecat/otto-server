@@ -68,3 +68,5 @@ LOG_SYSTEM_IMPLEMENTATION_GUIDE.md
 
 #prisma
 Prisma/reference.prisma
+test-log-code.ts
+test-log-apis.sh
