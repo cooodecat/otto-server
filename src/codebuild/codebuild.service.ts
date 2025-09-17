@@ -971,7 +971,7 @@ export class CodeBuildService {
         // 프로젝트의 활성 파이프라인 조회
         const { data: pipeline } = await this.supabaseService
           .getClient()
-          .from('pipeline')
+          .from('pipelines')
           .select('id, blocks, artifacts, environment_variables, cache')
           .eq('project_id', projectId)
           .single();

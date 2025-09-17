@@ -908,10 +908,10 @@ artifacts:
       },
     };
 
-    // pipeline 테이블에 insert (프로젝트당 하나의 파이프라인)
+    // pipelines 테이블에 insert (프로젝트당 하나의 파이프라인)
     const { data, error } = await this.supabaseService
       .getClient()
-      .from('pipeline')
+      .from('pipelines')
       .insert({
         project_id: projectId,
         data: defaultPipeline,

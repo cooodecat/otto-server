@@ -7,7 +7,6 @@ import {
   PipelineResponse,
   PipelinesListResponse,
 } from './dto';
-import { PipelineEntity } from '../types/pipeline.types';
 
 @Injectable()
 export class PipelineService {
@@ -19,7 +18,7 @@ export class PipelineService {
     // 기존 데이터 업데이트 (upsert)
     const { data, error } = await this.supabaseService
       .getClient()
-      .from('pipeline')
+      .from('pipelines')
       .upsert({
         project_id: createPipelineDto.projectId,
         name: createPipelineDto.name,
@@ -41,7 +40,7 @@ export class PipelineService {
   ): Promise<PipelinesListResponse> {
     const { data, error } = await this.supabaseService
       .getClient()
-      .from('pipeline')
+      .from('pipelines')
       .select('*')
       .eq('project_id', getPipelinesDto.projectId)
       .order('created_at', { ascending: false });
@@ -59,7 +58,7 @@ export class PipelineService {
   async getPipelineById(id: string): Promise<PipelineResponse> {
     const { data, error } = await this.supabaseService
       .getClient()
-      .from('pipeline')
+      .from('pipelines')
       .select('*')
       .eq('pipeline_id', id)
       .single();
@@ -91,7 +90,7 @@ export class PipelineService {
 
     const { data, error } = await this.supabaseService
       .getClient()
-      .from('pipeline')
+      .from('pipelines')
       .update(updateData)
       .eq('pipeline_id', id)
       .select();
@@ -112,7 +111,7 @@ export class PipelineService {
   async deletePipeline(id: string): Promise<void> {
     const { error } = await this.supabaseService
       .getClient()
-      .from('pipeline')
+      .from('pipelines')
       .delete()
       .eq('pipeline_id', id);
 
