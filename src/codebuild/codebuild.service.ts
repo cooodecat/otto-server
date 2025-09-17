@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CodeBuildClient,
@@ -274,6 +274,7 @@ export class CodeBuildService {
    */
   constructor(
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => BuildsService))
     private readonly buildsService: BuildsService,
   ) {
     // AWS 설정 로드

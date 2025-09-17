@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { CloudWatchLogsService } from '../cloudwatch-logs/cloudwatch-logs.service';
 import { RawLogEntry } from '../cloudwatch-logs/types/cloudwatch.types';
 import { CodeBuildService } from '../codebuild/codebuild.service';
@@ -246,6 +252,7 @@ export class LogsService implements OnModuleDestroy {
 
   constructor(
     private readonly cloudWatchLogsService: CloudWatchLogsService,
+    @Inject(forwardRef(() => CodeBuildService))
     private readonly codeBuildService: CodeBuildService,
     private readonly supabaseService: SupabaseService,
   ) {}

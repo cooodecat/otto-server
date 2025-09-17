@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { LogsController } from './logs.controller';
 import { LogsService } from './logs.service';
 import { CloudWatchLogsModule } from '../cloudwatch-logs/cloudwatch-logs.module';
@@ -33,7 +33,11 @@ import { SupabaseModule } from '../supabase/supabase.module';
  * ```
  */
 @Module({
-  imports: [CloudWatchLogsModule, CodeBuildModule, SupabaseModule],
+  imports: [
+    CloudWatchLogsModule,
+    forwardRef(() => CodeBuildModule),
+    SupabaseModule,
+  ],
   controllers: [LogsController],
   providers: [LogsService],
   exports: [LogsService], // 다른 모듈에서 사용할 수 있도록 export
