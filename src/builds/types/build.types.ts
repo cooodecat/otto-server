@@ -117,6 +117,10 @@ export interface CreateBuildHistoryRequest {
   environmentVariables?: Record<string, string>;
   /** 빌드 시작 시간 (선택사항, 미지정 시 현재 시간 사용) */
   startTime?: Date;
+  /** 빌드와 연결된 파이프라인 ID */
+  pipelineId?: string;
+  /** 빌드 시점의 파이프라인 데이터 스냅샷 */
+  pipelineData?: unknown;
 }
 
 /**

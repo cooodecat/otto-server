@@ -1,0 +1,58 @@
+# Node modules
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+dist
+*.tsbuildinfo
+
+# Supabase Functions (Deno-based, separate deployment)
+supabase/functions
+supabase-functions
+
+# Environment files
+.env*
+!.env.example
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+docs
+
+# Test files
+test
+*.spec.ts
+*.test.ts
+coverage
+.nyc_output
+
+# Development files
+.eslintrc*
+.prettierrc*
+jest.config.*
+tsconfig.spec.json
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.circleci
+
+# Temporary files
+tmp
+temp
+*.tmp
+*.log

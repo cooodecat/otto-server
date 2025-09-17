@@ -1,7 +1,8 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { CodeBuildController } from './codebuild.controller';
 import { CodeBuildService } from './codebuild.service';
 import { BuildsModule } from '../builds/builds.module';
+import { SupabaseModule } from '../supabase/supabase.module';
 
 /**
  * CodeBuild 모듈
@@ -40,7 +41,8 @@ import { BuildsModule } from '../builds/builds.module';
 @Module({
   // 의존성 모듈 가져오기
   imports: [
-    BuildsModule, // 빌드 이력 저장을 위한 모듈
+    forwardRef(() => BuildsModule), // 빌드 이력 저장을 위한 모듈 (순환 의존성 해결)
+    SupabaseModule, // Supabase 데이터베이스 연동을 위한 모듈
   ],
   // HTTP 요청을 처리하는 컨트롤러
   controllers: [CodeBuildController],

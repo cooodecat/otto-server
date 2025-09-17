@@ -243,6 +243,24 @@ export class ProjectService {
           this.logger.error('Failed to update CodeBuild info:', updateError);
         }
 
+        // 3-1. 기본 파이프라인 자동 생성
+        try {
+          await this.createDefaultPipeline(
+            typedProject.project_id,
+            githubRepoName,
+            selectedBranch || 'main',
+          );
+          this.logger.log(
+            `Default pipeline created for project: ${typedProject.project_id}`,
+          );
+        } catch (pipelineError) {
+          // 파이프라인 생성 실패는 프로젝트 생성을 막지 않음
+          this.logger.warn(
+            `Failed to create default pipeline for project ${typedProject.project_id}:`,
+            pipelineError,
+          );
+        }
+
         return {
           project: {
             ...typedProject,
@@ -828,6 +846,80 @@ artifacts:
     return Array.from(byteArray, (byte) =>
       byte.toString(16).padStart(2, '0'),
     ).join('');
+  }
+
+  /**
+   * 기본 파이프라인 생성
+   *
+   * 프로젝트 생성 시 자동으로 기본 파이프라인을 생성합니다.
+   * Node.js 프로젝트를 위한 기본 빌드 파이프라인을 제공합니다.
+   *
+   * @param projectId - 프로젝트 ID
+   * @param repoName - GitHub 저장소 이름
+   * @param branch - 선택된 브랜치
+   */
+  private async createDefaultPipeline(
+    projectId: string,
+    repoName: string,
+    branch: string,
+  ): Promise<void> {
+    const defaultPipeline = {
+      version: '0.2',
+      runtime: 'node:18',
+      blocks: [
+        {
+          id: 'install-deps',
+          block_type: 'node_package_manager',
+          group_type: 'build',
+          on_success: 'build-app',
+          package_manager: 'npm',
+          package_list: [],
+        },
+        {
+          id: 'build-app',
+          block_type: 'custom_build_command',
+          group_type: 'build',
+          on_success: 'test-app',
+          custom_command: ['npm run build'],
+        },
+        {
+          id: 'test-app',
+          block_type: 'node_test_command',
+          group_type: 'test',
+          package_manager: 'npm',
+          test_command: ['npm test'],
+        },
+      ],
+      artifacts: ['dist/**/*', 'build/**/*'],
+      environment_variables: {
+        NODE_ENV: 'production',
+        REPO_NAME: repoName,
+        BRANCH: branch,
+      },
+      cache: {
+        paths: ['node_modules/**/*'],
+      },
+    };
+
+    // pipeline 테이블에 upsert (프로젝트당 하나의 파이프라인)
+    const { error } = await this.supabaseService
+      .getClient()
+      .from('pipeline')
+      .upsert({
+        project_id: projectId,
+        data: defaultPipeline,
+        env: null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create default pipeline: ${error.message}`);
+    }
+
+    this.logger.log(
+      `Default pipeline created for project ${projectId} with repo ${repoName} on branch ${branch}`,
+    );
   }
 
   /**

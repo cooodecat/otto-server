@@ -190,6 +190,10 @@ export type Database = {
           project_id: string;
           /** AWS CodeBuild 빌드 ID */
           aws_build_id: string;
+          /** 파이프라인 ID */
+          pipeline_id?: string | null;
+          /** 파이프라인 데이터 스냅샷 */
+          pipeline_data?: unknown | null;
           /** 빌드 실행 상태 */
           build_execution_status:
             | 'pending'

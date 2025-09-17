@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CodeBuildClient,
@@ -9,6 +9,7 @@ import {
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
+import { SupabaseService } from '../supabase/supabase.service';
 
 /**
  * buildspec.yml 입력 인터페이스
@@ -274,7 +275,9 @@ export class CodeBuildService {
    */
   constructor(
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => BuildsService))
     private readonly buildsService: BuildsService,
+    private readonly supabaseService: SupabaseService,
   ) {
     // AWS 설정 로드
     const region = this.configService.get<string>('AWS_REGION') || 'us-east-1';
@@ -763,6 +766,8 @@ export class CodeBuildService {
     codebuildProjectName: string,
     buildSpecOverride: string,
     environmentVariables?: Record<string, string>,
+    pipelineId?: string,
+    pipelineData?: unknown,
   ) {
     try {
       const command = new StartBuildCommand({
@@ -791,6 +796,8 @@ export class CodeBuildService {
             buildSpec: buildSpecObject,
             environmentVariables,
             startTime: response.build.startTime,
+            pipelineId,
+            pipelineData,
           });
         } catch (error) {
           this.logger.warn(`Failed to save build history: ${String(error)}`);
@@ -940,6 +947,7 @@ export class CodeBuildService {
     projectId: string,
     input: FlowPipelineInput,
     environmentVariables?: Record<string, string>,
+    pipelineId?: string,
   ) {
     // FlowBlock을 buildspec.yml로 변환
     const buildSpecYaml = this.convertFlowPipelineToBuildSpec(input);
@@ -952,6 +960,37 @@ export class CodeBuildService {
     // projectId를 기반으로 AWS CodeBuild 프로젝트명 생성
     const codebuildProjectName = `otto-${userId}-${projectId}`;
 
+    // 파이프라인 ID가 없는 경우, 프로젝트의 기본 파이프라인 조회
+    let activePipelineId = pipelineId;
+    let pipelineData: unknown = null;
+
+    if (!activePipelineId) {
+      try {
+        // 프로젝트의 활성 파이프라인 조회
+        const { data: pipeline } = await this.supabaseService
+          .getClient()
+          .from('pipeline')
+          .select('id, blocks, artifacts, environment_variables, cache')
+          .eq('project_id', projectId)
+          .single();
+
+        if (pipeline) {
+          activePipelineId = pipeline.id;
+          // 파이프라인 데이터 스냅샷 저장
+          pipelineData = {
+            blocks: pipeline.blocks,
+            artifacts: pipeline.artifacts,
+            environment_variables: pipeline.environment_variables,
+            cache: pipeline.cache,
+          };
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Failed to retrieve pipeline for project ${projectId}: ${String(error)}`,
+        );
+      }
+    }
+
     // 동적으로 생성된 CodeBuild 프로젝트명으로 빌드 시작
     return this.startBuild(
       userId,
@@ -959,6 +998,8 @@ export class CodeBuildService {
       codebuildProjectName,
       buildSpecYaml,
       environmentVariables,
+      activePipelineId,
+      pipelineData,
     );
   }
 

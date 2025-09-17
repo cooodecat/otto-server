@@ -45,7 +45,6 @@ export class ProjectController {
       this.logger.log(
         `[ProjectController] GET /projects - userId: ${req.user?.id}`,
       );
-
       const result = await this.projectService.getUserProjects(req.user.id);
       this.logger.log(
         `[ProjectController] Returning ${result.totalProjects} projects`,

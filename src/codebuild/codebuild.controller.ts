@@ -120,13 +120,12 @@ export class CodeBuildController {
       const result = await this.codeBuildService.getBuildStatus(buildId);
 
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       // 오류 로깅
       this.logger.error(`Failed to get build status for ${buildId}:`, error);
 
       // 빌드를 찾을 수 없는 경우 404 반환
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      if (error.message.includes('not found')) {
+      if (error instanceof Error && error.message.includes('not found')) {
         throw new HttpException(
           `Build with ID ${buildId} not found`,
           HttpStatus.NOT_FOUND,
@@ -258,7 +257,7 @@ export class CodeBuildController {
       );
 
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       // 오류 로깅
       this.logger.error(
         `Failed to start FlowBlock build for project ${projectId}:`,
@@ -266,18 +265,18 @@ export class CodeBuildController {
       );
 
       // AWS CodeBuild 프로젝트를 찾을 수 없는 경우
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      if (error.name === 'ResourceNotFoundException') {
+      if (
+        error instanceof Error &&
+        error.name === 'ResourceNotFoundException'
+      ) {
         throw new HttpException(
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           `CodeBuild project not found for build: ${error.message}`,
           HttpStatus.NOT_FOUND,
         );
       }
 
       // 프로젝트 접근 권한이 없는 경우
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      if (error.status === HttpStatus.NOT_FOUND) {
+      if (error instanceof HttpException && error.getStatus() === 404) {
         throw new HttpException(
           `Project not found or access denied: ${projectId}`,
           HttpStatus.NOT_FOUND,
@@ -285,18 +284,15 @@ export class CodeBuildController {
       }
 
       // 잘못된 빌드 설정인 경우
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      if (error.name === 'InvalidInputException') {
+      if (error instanceof Error && error.name === 'InvalidInputException') {
         throw new HttpException(
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           `Invalid build configuration: ${error.message}`,
           HttpStatus.BAD_REQUEST,
         );
       }
 
       // AWS 권한 부족인 경우
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      if (error.name === 'UnauthorizedOperation') {
+      if (error instanceof Error && error.name === 'UnauthorizedOperation') {
         throw new HttpException(
           'Insufficient permissions to start build',
           HttpStatus.FORBIDDEN,
