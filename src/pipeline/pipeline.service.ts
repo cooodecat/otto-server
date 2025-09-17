@@ -7,6 +7,7 @@ import {
   PipelineResponse,
   PipelinesListResponse,
 } from './dto';
+import type { PipelineDB } from './types/pipeline-db.types';
 
 @Injectable()
 export class PipelineService {
@@ -26,10 +27,10 @@ export class PipelineService {
         env: null,
       })
       .select()
-      .single();
+      .single<PipelineDB>();
 
-    if (error) {
-      throw new Error(`Failed to create/update pipeline: ${error.message}`);
+    if (error || !data) {
+      throw new Error(`Failed to create/update pipeline: ${error?.message}`);
     }
 
     return this.mapToResponse(data);
@@ -45,13 +46,14 @@ export class PipelineService {
       .eq('project_id', getPipelinesDto.projectId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      throw new Error(`Failed to fetch pipelines: ${error.message}`);
+    if (error || !data) {
+      throw new Error(`Failed to fetch pipelines: ${error?.message}`);
     }
 
+    const pipelines = data as PipelineDB[];
     return {
-      pipelines: data.map((pipeline) => this.mapToResponse(pipeline)),
-      total: data.length,
+      pipelines: pipelines.map((pipeline) => this.mapToResponse(pipeline)),
+      total: pipelines.length,
     };
   }
 
@@ -61,9 +63,9 @@ export class PipelineService {
       .from('pipelines')
       .select('*')
       .eq('pipeline_id', id)
-      .single();
+      .single<PipelineDB>();
 
-    if (error) {
+    if (error || !data) {
       throw new NotFoundException(`Pipeline with ID ${id} not found`);
     }
 
@@ -105,7 +107,8 @@ export class PipelineService {
       throw new NotFoundException(`Pipeline with ID ${id} not found`);
     }
 
-    return this.mapToResponse(data[0]);
+    const pipelines = data as PipelineDB[];
+    return this.mapToResponse(pipelines[0]);
   }
 
   async deletePipeline(id: string): Promise<void> {
@@ -122,13 +125,7 @@ export class PipelineService {
     }
   }
 
-  private mapToResponse(pipeline: {
-    pipeline_id: string;
-    project_id: string;
-    name?: string;
-    data: { nodes: unknown[]; edges: unknown[] };
-    created_at: string;
-  }): PipelineResponse {
+  private mapToResponse(pipeline: PipelineDB): PipelineResponse {
     return {
       id: pipeline.pipeline_id,
       projectId: pipeline.project_id,
