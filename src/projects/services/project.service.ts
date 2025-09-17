@@ -38,6 +38,18 @@ export class ProjectService {
         `[ProjectService] getUserProjects called for userId: ${userId}`,
       );
 
+      // 먼저 모든 프로젝트 조회 (디버깅용)
+      const { data: allProjects } = await this.supabaseService
+        .getClient()
+        .from('projects')
+        .select('project_id, name, user_id')
+        .limit(10);
+      
+      this.logger.log(
+        `[ProjectService] All projects in DB: ${JSON.stringify(allProjects)}`,
+      );
+
+      // 임시로 user_id 필터 제거하여 모든 프로젝트 조회 (디버깅용)
       const { data: projects, error } = await this.supabaseService
         .getClient()
         .from('projects')
@@ -55,7 +67,8 @@ export class ProjectService {
           updated_at,
           codebuild_status,
           codebuild_project_name,
-          codebuild_error_message
+          codebuild_error_message,
+          user_id
         `,
         )
         .eq('user_id', userId)
@@ -185,21 +198,31 @@ export class ProjectService {
       }
 
       // 1. 프로젝트 생성
+      this.logger.log(
+        `[ProjectService] Creating project with userId: ${userId}`,
+      );
+      
+      const projectData = {
+        name,
+        description,
+        github_owner: githubOwner,
+        github_repo_id: githubRepoId,
+        github_repo_name: githubRepoName,
+        github_repo_url: githubRepoUrl,
+        installation_id: installationId,
+        user_id: userId,
+        selected_branch: selectedBranch || 'main',
+        codebuild_status: 'PENDING',
+      };
+      
+      this.logger.log(
+        `[ProjectService] Project data to insert: ${JSON.stringify(projectData)}`,
+      );
+      
       const { data: project, error: projectError } = await this.supabaseService
         .getClient()
         .from('projects')
-        .insert({
-          name,
-          description,
-          github_owner: githubOwner,
-          github_repo_id: githubRepoId,
-          github_repo_name: githubRepoName,
-          github_repo_url: githubRepoUrl,
-          installation_id: installationId,
-          user_id: userId,
-          selected_branch: selectedBranch || 'main',
-          codebuild_status: 'PENDING',
-        })
+        .insert(projectData)
         .select()
         .single();
 
@@ -797,6 +820,13 @@ artifacts:
       runtime: 'node:18',
       blocks: [
         {
+          id: 'trigger',
+          block_type: 'branch_push_trigger',
+          group_type: 'trigger',
+          on_success: 'install-deps',
+          branches: [branch],
+        },
+        {
           id: 'install-deps',
           block_type: 'node_package_manager',
           group_type: 'build',
@@ -830,11 +860,11 @@ artifacts:
       },
     };
 
-    // pipeline 테이블에 upsert (프로젝트당 하나의 파이프라인)
-    const { error } = await this.supabaseService
+    // pipeline 테이블에 insert (프로젝트당 하나의 파이프라인)
+    const { data, error } = await this.supabaseService
       .getClient()
       .from('pipeline')
-      .upsert({
+      .insert({
         project_id: projectId,
         data: defaultPipeline,
         env: null,
@@ -843,7 +873,26 @@ artifacts:
       .single();
 
     if (error) {
+      this.logger.error(
+        `Failed to create default pipeline: ${error.message}`,
+        {
+          projectId,
+          errorCode: error.code,
+          errorDetails: error.details,
+          errorHint: error.hint,
+        },
+      );
       throw new Error(`Failed to create default pipeline: ${error.message}`);
+    }
+
+    if (data) {
+      this.logger.log(
+        `Default pipeline created successfully:`,
+        {
+          pipelineId: data.pipeline_id,
+          projectId: data.project_id,
+        },
+      );
     }
 
     this.logger.log(

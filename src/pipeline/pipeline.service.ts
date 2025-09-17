@@ -22,6 +22,7 @@ export class PipelineService {
       .from('pipeline')
       .upsert({
         project_id: createPipelineDto.projectId,
+        name: createPipelineDto.name,
         data: createPipelineDto.flowData,
         env: null,
       })
@@ -74,16 +75,26 @@ export class PipelineService {
     id: string,
     updatePipelineDto: UpdatePipelineDto,
   ): Promise<PipelineResponse> {
+    const updateData: any = {};
+    
+    if (updatePipelineDto.name !== undefined) {
+      updateData.name = updatePipelineDto.name;
+    }
+    
+    if (updatePipelineDto.flowData !== undefined) {
+      updateData.data = updatePipelineDto.flowData;
+    }
+    
+    if (updatePipelineDto.env !== undefined) {
+      updateData.env = updatePipelineDto.env;
+    }
+    
     const { data, error } = await this.supabaseService
       .getClient()
       .from('pipeline')
-      .update({
-        data: updatePipelineDto.flowData,
-        env: updatePipelineDto.env || null,
-      })
+      .update(updateData)
       .eq('pipeline_id', id)
-      .select()
-      .single();
+      .select();
 
     if (error) {
       throw new NotFoundException(
@@ -91,7 +102,11 @@ export class PipelineService {
       );
     }
 
-    return this.mapToResponse(data);
+    if (!data || data.length === 0) {
+      throw new NotFoundException(`Pipeline with ID ${id} not found`);
+    }
+
+    return this.mapToResponse(data[0]);
   }
 
   async deletePipeline(id: string): Promise<void> {
@@ -112,7 +127,7 @@ export class PipelineService {
     return {
       id: pipeline.pipeline_id,
       projectId: pipeline.project_id,
-      name: `Pipeline ${new Date(pipeline.created_at).toLocaleString()}`, // 기존 스키마에 name 필드가 없어서 생성
+      name: pipeline.name || `Pipeline ${new Date(pipeline.created_at).toLocaleString()}`, // DB의 name 필드 사용
       description: 'Pipeline created from dashboard', // 기존 스키마에 description 필드가 없어서 기본값
       flowData: pipeline.data,
       isActive: true, // 기존 스키마에 isActive 필드가 없어서 기본값

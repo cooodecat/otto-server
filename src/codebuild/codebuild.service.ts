@@ -4,8 +4,9 @@ import {
   CodeBuildClient,
   StartBuildCommand,
   BatchGetBuildsCommand,
+  BatchGetProjectsCommand,
   CreateProjectCommand,
-  CreateProjectCommandOutput,
+  UpdateProjectCommand,
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
@@ -1162,32 +1163,88 @@ export class CodeBuildService {
 
       this.logger.log(`[CodeBuildService] AWS CodeBuild API 호출 시작...`);
 
-      const createProjectResult =
-        await this.codeBuildClient.send(createProjectCommand);
+      try {
+        const createProjectResult =
+          await this.codeBuildClient.send(createProjectCommand);
 
-      this.logger.log(`[CodeBuildService] AWS CodeBuild API 호출 성공:`, {
-        projectArn: createProjectResult.project?.arn,
-        projectName: createProjectResult.project?.name,
-      });
+        this.logger.log(`[CodeBuildService] AWS CodeBuild API 호출 성공:`, {
+          projectArn: createProjectResult.project?.arn,
+          projectName: createProjectResult.project?.name,
+        });
 
-      if (
-        !createProjectResult.project?.arn ||
-        !createProjectResult.project?.name
-      ) {
-        throw new Error(
-          'CodeBuild 프로젝트 생성 실패: 프로젝트 정보가 누락되었습니다',
+        if (
+          !createProjectResult.project?.arn ||
+          !createProjectResult.project?.name
+        ) {
+          throw new Error(
+            'CodeBuild 프로젝트 생성 실패: 프로젝트 정보가 누락되었습니다',
+          );
+        }
+
+        this.logger.log(
+          `CodeBuild 프로젝트 생성 완료: ${createProjectResult.project.name} (ARN: ${createProjectResult.project.arn})`,
         );
+
+        return {
+          projectName: createProjectResult.project.name,
+          projectArn: createProjectResult.project.arn,
+          logGroupName,
+        };
+      } catch (createError: any) {
+        // 이미 존재하는 프로젝트인 경우 기존 프로젝트 정보 반환
+        if (createError.__type === 'ResourceAlreadyExistsException' || 
+            createError.name === 'ResourceAlreadyExistsException') {
+          this.logger.warn(
+            `[CodeBuildService] CodeBuild 프로젝트가 이미 존재함: ${codebuildProjectName}`,
+          );
+          
+          // 기존 프로젝트 정보 조회
+          try {
+            const batchGetCommand = new BatchGetProjectsCommand({
+              names: [codebuildProjectName],
+            });
+            
+            const existingProject = await this.codeBuildClient.send(batchGetCommand);
+            
+            if (existingProject.projects && existingProject.projects.length > 0) {
+              const project = existingProject.projects[0];
+              this.logger.log(
+                `[CodeBuildService] 기존 프로젝트 사용: ${project.name} (ARN: ${project.arn})`,
+              );
+              
+              // 기존 프로젝트의 소스 설정을 업데이트 (필요한 경우)
+              const updateCommand = new UpdateProjectCommand({
+                name: codebuildProjectName,
+                source: {
+                  type: 'GITHUB',
+                  location: githubRepoUrl,
+                  buildspec: this.createDefaultBuildspec(),
+                },
+                sourceVersion: `refs/heads/${selectedBranch}`,
+              });
+              
+              await this.codeBuildClient.send(updateCommand);
+              this.logger.log(
+                `[CodeBuildService] 기존 프로젝트 소스 설정 업데이트 완료`,
+              );
+              
+              return {
+                projectName: project.name || codebuildProjectName,
+                projectArn: project.arn || '',
+                logGroupName,
+              };
+            }
+          } catch (getError) {
+            this.logger.error(
+              `[CodeBuildService] 기존 프로젝트 조회 실패:`,
+              getError,
+            );
+          }
+        }
+        
+        // 다른 오류의 경우 그대로 throw
+        throw createError;
       }
-
-      this.logger.log(
-        `CodeBuild 프로젝트 생성 완료: ${createProjectResult.project.name} (ARN: ${createProjectResult.project.arn})`,
-      );
-
-      return {
-        projectName: createProjectResult.project.name,
-        projectArn: createProjectResult.project.arn,
-        logGroupName,
-      };
     } catch (error) {
       this.logger.error(`CodeBuild 프로젝트 생성 실패: ${projectName}`, error);
       throw error;
