@@ -42,7 +42,10 @@ export class ProjectController {
     @Req() req: { user: AuthenticatedUser },
   ): Promise<ProjectsResponse> {
     try {
-      return await this.projectService.getUserProjects(req.user.id);
+      this.logger.log(`[ProjectController] getUserProjects called for user: ${req.user?.id}`);
+      const result = await this.projectService.getUserProjects(req.user.id);
+      this.logger.log(`[ProjectController] Returning ${result.totalProjects} projects`);
+      return result;
     } catch (error) {
       this.logger.error('Error in getUserProjects:', error);
       throw new HttpException(

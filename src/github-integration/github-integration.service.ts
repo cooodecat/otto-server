@@ -22,43 +22,80 @@ import type {
 @Injectable()
 export class GithubIntegrationService {
   private readonly logger = new Logger(GithubIntegrationService.name);
-  private readonly appId: string;
-  private readonly privateKey: string;
+  private appId: string = '';
+  private privateKey: string = '';
   private readonly frontendUrl: string;
+  private isConfigured: boolean = false;
 
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
   ) {
-    this.appId = this.configService.get<string>('OTTO_GITHUB_APP_ID') || '';
-    this.privateKey = (
-      this.configService.get<string>('OTTO_GITHUB_APP_PRIVATE_KEY') || ''
-    ).replace(/\\n/g, '\n');
     this.frontendUrl =
       this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
 
-    if (!this.appId || !this.privateKey) {
-      throw new Error('GitHub App credentials not configured');
-    }
+    // GitHub App 설정 초기화 시도
+    this.initializeGitHubApp();
+  }
 
-    // PEM 형식 확인
-    if (
-      !this.privateKey.includes('-----BEGIN RSA PRIVATE KEY-----') &&
-      !this.privateKey.includes('-----BEGIN PRIVATE KEY-----')
-    ) {
-      throw new Error('GitHub App Private Key가 올바른 PEM 형식이 아닙니다');
-    }
+  private initializeGitHubApp(): void {
+    try {
+      const appId = this.configService.get<string>('OTTO_GITHUB_APP_ID');
+      const privateKeyRaw = this.configService.get<string>('OTTO_GITHUB_APP_PRIVATE_KEY');
 
-    this.logger.log('[GitHub Service] 인증 정보 로드 완료:', {
-      appId: this.appId,
-      privateKeyLength: this.privateKey.length,
-      privateKeyStart: this.privateKey.substring(0, 50),
-      hasBeginMarker: this.privateKey.includes('-----BEGIN'),
-      hasEndMarker: this.privateKey.includes('-----END'),
-    });
+      if (!appId || !privateKeyRaw) {
+        this.logger.warn(
+          '[GitHub Service] GitHub App credentials not configured - GitHub integration will be disabled',
+        );
+        this.isConfigured = false;
+        return;
+      }
+
+      // Private Key 처리 - 다양한 형식 지원
+      let processedKey = privateKeyRaw;
+
+      // JSON 문자열로 저장된 경우 처리
+      if (processedKey.startsWith('"') && processedKey.endsWith('"')) {
+        try {
+          processedKey = JSON.parse(processedKey);
+        } catch {
+          // JSON 파싱 실패 시 그대로 사용
+        }
+      }
+
+      // 이스케이프된 줄바꿈 처리
+      processedKey = processedKey.replace(/\\n/g, '\n');
+
+      // 따옴표 제거
+      processedKey = processedKey.replace(/^"|"$/g, '');
+
+      // PEM 헤더/푸터가 없는 경우 추가
+      if (!processedKey.includes('-----BEGIN')) {
+        // RSA PRIVATE KEY 형식으로 시도
+        processedKey = `-----BEGIN RSA PRIVATE KEY-----\n${processedKey}\n-----END RSA PRIVATE KEY-----`;
+      }
+
+      this.appId = appId;
+      this.privateKey = processedKey;
+      this.isConfigured = true;
+
+      this.logger.log('[GitHub Service] GitHub App 인증 정보 로드 완료:', {
+        appId: this.appId,
+        privateKeyLength: this.privateKey.length,
+        hasBeginMarker: this.privateKey.includes('-----BEGIN'),
+        hasEndMarker: this.privateKey.includes('-----END'),
+      });
+    } catch (error) {
+      this.logger.error('[GitHub Service] GitHub App 초기화 실패:', error);
+      this.isConfigured = false;
+    }
   }
 
   private generateJWT(): string {
+    if (!this.isConfigured) {
+      throw new BadRequestException('GitHub App이 구성되지 않았습니다');
+    }
+
     const now = Math.floor(Date.now() / 1000);
     const payload = {
       iat: now,
@@ -87,8 +124,17 @@ export class GithubIntegrationService {
     } catch (error) {
       this.logger.error('[GitHub Service] JWT 생성 실패:', {
         error: error instanceof Error ? error.message : 'Unknown error',
-        privateKeyStart: this.privateKey.substring(0, 50),
+        appId: this.appId,
+        privateKeyPreview: this.privateKey.substring(0, 100),
       });
+
+      // Private Key 형식 문제일 가능성이 높음
+      if (error instanceof Error && error.message.includes('PEM')) {
+        throw new BadRequestException(
+          'GitHub App Private Key 형식이 올바르지 않습니다. 환경변수를 확인해주세요.',
+        );
+      }
+
       throw new BadRequestException('GitHub App JWT 생성에 실패했습니다');
     }
   }

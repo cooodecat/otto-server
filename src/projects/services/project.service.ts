@@ -34,6 +34,8 @@ export class ProjectService {
    */
   async getUserProjects(userId: string): Promise<ProjectsResponse> {
     try {
+      this.logger.log(`[ProjectService] getUserProjects called for userId: ${userId}`);
+
       const { data: projects, error } = await this.supabaseService
         .getClient()
         .from('projects')
@@ -61,6 +63,8 @@ export class ProjectService {
         this.logger.error('Failed to fetch projects:', error);
         throw new BadRequestException('Failed to fetch projects');
       }
+
+      this.logger.log(`[ProjectService] Found ${projects?.length || 0} projects for userId: ${userId}`);
 
       const typedProjects = this.validateProjects(projects);
 
