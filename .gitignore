@@ -60,3 +60,11 @@ pids
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 supabase/.temp/
+
+# Documentation
+OTTO_ARCHITECTURE_GUIDE.md
+LOG_SYSTEM_FRONTEND_GUIDE.md
+LOG_SYSTEM_IMPLEMENTATION_GUIDE.md
+
+#prisma
+Prisma/reference.prisma

@@ -158,6 +158,66 @@ export class LogsController {
   }
 
   /**
+   * 통합 로그 조회 - 실시간/아카이브 자동 선택
+   * 
+   * 빌드가 활성 상태면 메모리에서, 완료된 빌드면 DB에서 자동으로 조회합니다.
+   * 
+   * @param buildId - AWS CodeBuild ID
+   * @returns 로그 데이터와 소스 정보
+   */
+  @Get('builds/:buildId/unified')
+  async getUnifiedLogs(@Param('buildId') buildId: string): Promise<{
+    source: 'realtime' | 'archive';
+    logs: LogEvent[];
+    metadata?: any;
+  }> {
+    return this.logsService.getUnifiedLogs(buildId);
+  }
+
+  /**
+   * DB에 아카이빙된 로그 조회
+   * 
+   * log_archives 테이블에서 완료된 빌드의 로그를 조회합니다.
+   * 
+   * @param buildId - AWS CodeBuild ID
+   * @returns 아카이빙된 로그와 메타데이터
+   */
+  @Get('builds/:buildId/archive')
+  async getArchivedLogs(@Param('buildId') buildId: string): Promise<{
+    logs: LogEvent[];
+    metadata?: {
+      totalLines: number;
+      errorCount: number;
+      warningCount: number;
+      exportCompletedAt: string;
+    };
+  } | null> {
+    return this.logsService.getArchivedLogs(buildId);
+  }
+
+  /**
+   * 수동으로 로그 아카이빙 트리거
+   * 
+   * 빌드가 완료되었을 때 수동으로 로그를 DB에 아카이빙합니다.
+   * 
+   * @param buildId - AWS CodeBuild ID
+   * @returns 아카이빙 성공 여부
+   */
+  @Post('builds/:buildId/archive')
+  async archiveLogs(@Param('buildId') buildId: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    const success = await this.logsService.archiveToDatabase(buildId);
+    return {
+      success,
+      message: success 
+        ? `Logs archived successfully for build: ${buildId}`
+        : `Failed to archive logs for build: ${buildId}`,
+    };
+  }
+
+  /**
    * Server-Sent Events endpoint for real-time log streaming
    *
    * Provides a persistent HTTP connection that streams log events in real-time

@@ -1,5 +1,6 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { LogsService } from '../logs/logs.service';
 import {
   BuildHistory,
   BuildExecutionPhase,
@@ -51,8 +52,13 @@ export class BuildsService {
    * BuildsService 생성자
    *
    * @param supabaseService - Supabase 데이터베이스 서비스
+   * @param logsService - 로그 아카이빙 서비스
    */
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    @Inject(forwardRef(() => LogsService))
+    private readonly logsService: LogsService,
+  ) {}
 
   /**
    * 빌드 시작 시 초기 이력을 저장합니다
@@ -165,6 +171,30 @@ export class BuildsService {
       this.logger.log(
         `Build status updated: ${awsBuildId} -> ${updateData.buildExecutionStatus}`,
       );
+
+      // 빌드가 완료 상태로 변경되면 로그 아카이빙 트리거
+      if (updateData.buildExecutionStatus) {
+        const isTerminalStatus = [
+          'succeeded',
+          'failed',
+          'stopped',
+          'timed_out',
+        ].includes(updateData.buildExecutionStatus.toLowerCase());
+
+        if (isTerminalStatus) {
+          this.logger.log(
+            `Build ${awsBuildId} reached terminal status: ${updateData.buildExecutionStatus}. Triggering log archiving.`,
+          );
+          
+          // 비동기로 로그 아카이빙 실행 (빌드 업데이트 응답을 지연시키지 않음)
+          void this.logsService.handleBuildComplete(awsBuildId).catch(error => {
+            this.logger.error(
+              `Failed to archive logs for build ${awsBuildId}:`,
+              error,
+            );
+          });
+        }
+      }
 
       return this.mapDatabaseRowToBuildHistory(data);
     } catch (error) {

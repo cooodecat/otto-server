@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { CloudWatchLogsService } from '../cloudwatch-logs/cloudwatch-logs.service';
 import { RawLogEntry } from '../cloudwatch-logs/types/cloudwatch.types';
 import { CodeBuildService } from '../codebuild/codebuild.service';
+import { SupabaseService } from '../supabase/supabase.service';
 
 /**
  * CloudWatch Logs API에서 가져온 단일 로그 이벤트를 나타냅니다
@@ -245,6 +246,7 @@ export class LogsService implements OnModuleDestroy {
   constructor(
     private readonly cloudWatchLogsService: CloudWatchLogsService,
     private readonly codeBuildService: CodeBuildService,
+    private readonly supabaseService: SupabaseService,
   ) {}
 
   /**
@@ -642,14 +644,258 @@ export class LogsService implements OnModuleDestroy {
       ].includes(s);
       if (isTerminal) {
         this.logger.log(
-          `Build ${buildId} reached terminal state ${s}. Stopping log collection.`,
+          `Build ${buildId} reached terminal state ${s}. Stopping log collection and archiving.`,
         );
+        
+        // 로그를 DB에 아카이빙
+        await this.archiveToDatabase(buildId);
+        
+        // 로그 수집 중지
         this.stopLogCollection(buildId);
       }
     } catch (e) {
       this.logger.warn(
         `Failed to check build terminal status for ${buildId}: ${String(e)}`,
       );
+    }
+  }
+
+  /**
+   * 메모리에 캐시된 로그를 Supabase DB에 아카이빙합니다
+   * 
+   * 빌드가 완료되면 메모리에 저장된 로그를 log_archives 테이블에 저장합니다.
+   * JSONB 형식으로 전체 로그를 저장하여 향후 조회가 가능하도록 합니다.
+   * 
+   * @param buildId - AWS CodeBuild ID (예: 'otto-codebuild-project:uuid')
+   * @returns 아카이빙 성공 여부
+   */
+  async archiveToDatabase(buildId: string): Promise<boolean> {
+    try {
+      const buildData = this.buildLogs.get(buildId);
+      if (!buildData || buildData.logs.length === 0) {
+        this.logger.warn(`No logs to archive for build: ${buildId}`);
+        return false;
+      }
+
+      // build_histories 테이블에서 build_history_id 찾기
+      const { data: buildHistory, error: bhError } = await this.supabaseService
+        .getClient()
+        .from('build_histories')
+        .select('id, project_id, user_id')
+        .eq('aws_build_id', buildId)
+        .single();
+
+      if (bhError || !buildHistory) {
+        this.logger.error(
+          `Failed to find build history for ${buildId}:`,
+          bhError,
+        );
+        return false;
+      }
+
+      // 로그 분석 (에러, 경고 카운트)
+      let errorCount = 0;
+      let warningCount = 0;
+      let infoCount = 0;
+      const errorMessages: string[] = [];
+
+      buildData.logs.forEach((log) => {
+        const message = log.message || '';
+        if (/\b(ERROR|FAILED|FAILURE)\b/i.test(message)) {
+          errorCount++;
+          if (errorMessages.length < 10) {
+            errorMessages.push(message.substring(0, 200));
+          }
+        } else if (/\b(WARN|WARNING)\b/i.test(message)) {
+          warningCount++;
+        } else if (/\b(INFO|SUCCESS)\b/i.test(message)) {
+          infoCount++;
+        }
+      });
+
+      // 타임스탬프 추출
+      const timestamps = buildData.logs
+        .map((log) => log.timestamp)
+        .filter((ts) => ts);
+      const firstTimestamp = timestamps.length > 0 ? Math.min(...timestamps) : null;
+      const lastTimestamp = timestamps.length > 0 ? Math.max(...timestamps) : null;
+
+      // log_archives 테이블에 저장
+      const { error: archiveError } = await this.supabaseService
+        .getClient()
+        .from('log_archives')
+        .upsert(
+          {
+            build_history_id: buildHistory.id,
+            s3_bucket: null, // DB 직접 저장 방식이므로 S3 정보 없음
+            s3_key_prefix: null,
+            s3_export_task_id: null,
+            export_status: 'completed',
+            total_log_lines: buildData.logs.length,
+            error_count: errorCount,
+            warning_count: warningCount,
+            info_count: infoCount,
+            file_size_bytes: JSON.stringify(buildData.logs).length, // 대략적인 크기
+            archived_files: buildData.logs, // 전체 로그를 JSONB로 저장
+            error_summary: errorMessages.length > 0 ? errorMessages : null,
+            first_log_timestamp: firstTimestamp ? new Date(firstTimestamp).toISOString() : null,
+            last_log_timestamp: lastTimestamp ? new Date(lastTimestamp).toISOString() : null,
+            export_started_at: new Date().toISOString(),
+            export_completed_at: new Date().toISOString(),
+          },
+          {
+            onConflict: 'build_history_id',
+          },
+        );
+
+      if (archiveError) {
+        this.logger.error(
+          `Failed to archive logs for ${buildId}:`,
+          archiveError,
+        );
+        return false;
+      }
+
+      this.logger.log(
+        `Successfully archived ${buildData.logs.length} logs for build: ${buildId}`,
+      );
+
+      // 메모리에서 로그 제거 (옵션)
+      // this.buildLogs.delete(buildId);
+
+      return true;
+    } catch (error) {
+      this.logger.error(`Error archiving logs for ${buildId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * DB에 아카이빙된 로그를 조회합니다
+   * 
+   * log_archives 테이블에서 특정 빌드의 아카이빙된 로그를 가져옵니다.
+   * 
+   * @param buildId - AWS CodeBuild ID
+   * @returns 아카이빙된 로그 데이터
+   */
+  async getArchivedLogs(buildId: string): Promise<{
+    logs: LogEvent[];
+    metadata?: {
+      totalLines: number;
+      errorCount: number;
+      warningCount: number;
+      exportCompletedAt: string;
+    };
+  } | null> {
+    try {
+      // build_histories에서 id 찾기
+      const { data: buildHistory, error: bhError } = await this.supabaseService
+        .getClient()
+        .from('build_histories')
+        .select('id')
+        .eq('aws_build_id', buildId)
+        .single();
+
+      if (bhError || !buildHistory) {
+        this.logger.warn(`Build history not found for ${buildId}`);
+        return null;
+      }
+
+      // log_archives에서 조회
+      const { data: archive, error: archiveError } = await this.supabaseService
+        .getClient()
+        .from('log_archives')
+        .select('*')
+        .eq('build_history_id', buildHistory.id)
+        .single();
+
+      if (archiveError || !archive) {
+        this.logger.warn(`No archived logs found for ${buildId}`);
+        return null;
+      }
+
+      // archived_files가 JSONB 배열로 저장된 로그들
+      const logs = (archive.archived_files as LogEvent[]) || [];
+
+      return {
+        logs,
+        metadata: {
+          totalLines: archive.total_log_lines || 0,
+          errorCount: archive.error_count || 0,
+          warningCount: archive.warning_count || 0,
+          exportCompletedAt: archive.export_completed_at || '',
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Error retrieving archived logs for ${buildId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 통합 로그 조회 - 실시간/아카이브 자동 선택
+   * 
+   * 빌드가 활성 상태면 메모리에서, 완료된 빌드면 DB에서 조회합니다.
+   * 
+   * @param buildId - AWS CodeBuild ID
+   * @returns 로그 데이터 (소스 정보 포함)
+   */
+  async getUnifiedLogs(buildId: string): Promise<{
+    source: 'realtime' | 'archive';
+    logs: LogEvent[];
+    metadata?: any;
+  }> {
+    // 먼저 메모리 캐시 확인
+    const buildData = this.buildLogs.get(buildId);
+    
+    if (buildData?.isActive) {
+      // 실행 중인 빌드: 메모리에서 조회
+      return {
+        source: 'realtime',
+        logs: buildData.logs,
+      };
+    }
+
+    // 완료된 빌드: DB에서 조회
+    const archived = await this.getArchivedLogs(buildId);
+    
+    if (archived) {
+      return {
+        source: 'archive',
+        logs: archived.logs,
+        metadata: archived.metadata,
+      };
+    }
+
+    // 둘 다 없으면 빈 배열 반환
+    return {
+      source: 'realtime',
+      logs: [],
+    };
+  }
+
+  /**
+   * 빌드 완료 시 호출되는 메서드 (외부에서 명시적으로 호출 가능)
+   * 
+   * BuildsService에서 빌드 상태가 완료로 업데이트될 때 호출됩니다.
+   * 
+   * @param buildId - AWS CodeBuild ID
+   */
+  async handleBuildComplete(buildId: string): Promise<void> {
+    try {
+      // 로그 아카이빙
+      await this.archiveToDatabase(buildId);
+      
+      // 로그 수집 중지
+      this.stopLogCollection(buildId);
+      
+      // 선택적: 메모리에서 제거 (일정 시간 후)
+      setTimeout(() => {
+        this.buildLogs.delete(buildId);
+        this.logger.debug(`Removed cached logs for completed build: ${buildId}`);
+      }, 60000); // 1분 후 제거
+    } catch (error) {
+      this.logger.error(`Error handling build completion for ${buildId}:`, error);
     }
   }
 }
