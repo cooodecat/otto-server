@@ -5,7 +5,6 @@ import {
   StartBuildCommand,
   BatchGetBuildsCommand,
   CreateProjectCommand,
-  CreateProjectCommandOutput,
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
@@ -49,14 +48,14 @@ export interface BuildSpecInput {
       files: string[];
       /** 파일 형식 */
       'file-format'?:
-      | 'JUNITXML'
-      | 'CUCUMBERJSON'
-      | 'TESTNGXML'
-      | 'CLOVERXML'
-      | 'VISUALSTUDIOTRX'
-      | 'JACOCOXML'
-      | 'NUNITXML'
-      | 'NUNIT3XML';
+        | 'JUNITXML'
+        | 'CUCUMBERJSON'
+        | 'TESTNGXML'
+        | 'CLOVERXML'
+        | 'VISUALSTUDIOTRX'
+        | 'JACOCOXML'
+        | 'NUNITXML'
+        | 'NUNIT3XML';
       /** 기본 디렉토리 */
       'base-directory'?: string;
       /** 경로 제거 여부 */
@@ -288,8 +287,12 @@ export class CodeBuildService {
     this.logger.log(`[CodeBuildService] AWS 자격 증명 확인:`, {
       region,
       accessKeyId: accessKeyId ? `${accessKeyId.substring(0, 10)}...` : '누락',
-      secretAccessKey: secretAccessKey ? `${secretAccessKey.substring(0, 10)}...` : '누락',
-      sessionToken: sessionToken ? `${sessionToken.substring(0, 10)}...` : '누락',
+      secretAccessKey: secretAccessKey
+        ? `${secretAccessKey.substring(0, 10)}...`
+        : '누락',
+      sessionToken: sessionToken
+        ? `${sessionToken.substring(0, 10)}...`
+        : '누락',
       isTemporaryCredentials: accessKeyId?.startsWith('ASIA'),
     });
 
@@ -300,7 +303,11 @@ export class CodeBuildService {
     }
 
     // CodeBuild 클라이언트 초기화
-    const credentials: any = {
+    const credentials: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      sessionToken?: string;
+    } = {
       accessKeyId,
       secretAccessKey,
     };
@@ -308,9 +315,13 @@ export class CodeBuildService {
     // 임시 자격 증명인 경우 SessionToken 추가
     if (sessionToken) {
       credentials.sessionToken = sessionToken;
-      this.logger.log(`[CodeBuildService] 임시 자격 증명 사용 - SessionToken 추가됨`);
+      this.logger.log(
+        `[CodeBuildService] 임시 자격 증명 사용 - SessionToken 추가됨`,
+      );
     } else {
-      this.logger.log(`[CodeBuildService] 영구 자격 증명 사용 - SessionToken 없음`);
+      this.logger.log(
+        `[CodeBuildService] 영구 자격 증명 사용 - SessionToken 없음`,
+      );
     }
 
     this.logger.log(`[CodeBuildService] CodeBuild 클라이언트 초기화:`, {
@@ -758,10 +769,10 @@ export class CodeBuildService {
         buildspecOverride: buildSpecOverride,
         environmentVariablesOverride: environmentVariables
           ? Object.entries(environmentVariables).map(([name, value]) => ({
-            name,
-            value,
-            type: 'PLAINTEXT',
-          }))
+              name,
+              value,
+              type: 'PLAINTEXT',
+            }))
           : undefined,
       });
 
@@ -1052,8 +1063,12 @@ export class CodeBuildService {
 
       this.logger.log(`[CodeBuildService] AWS 설정 확인:`, {
         region,
-        codebuildServiceRole: codebuildServiceRole ? `${codebuildServiceRole.substring(0, 20)}...` : '누락',
-        codebuildArtifactsBucket: codebuildArtifactsBucket ? `${codebuildArtifactsBucket.substring(0, 20)}...` : '누락',
+        codebuildServiceRole: codebuildServiceRole
+          ? `${codebuildServiceRole.substring(0, 20)}...`
+          : '누락',
+        codebuildArtifactsBucket: codebuildArtifactsBucket
+          ? `${codebuildArtifactsBucket.substring(0, 20)}...`
+          : '누락',
       });
 
       if (!codebuildServiceRole || !codebuildArtifactsBucket) {
@@ -1105,9 +1120,7 @@ export class CodeBuildService {
 
       this.logger.log(`[CodeBuildService] AWS CodeBuild API 호출 시작...`);
 
-      const result = (await this.codeBuildClient.send(
-        createProjectCommand,
-      )) as CreateProjectCommandOutput;
+      const result = await this.codeBuildClient.send(createProjectCommand);
 
       this.logger.log(`[CodeBuildService] AWS CodeBuild API 호출 성공:`, {
         projectArn: result.project?.arn,

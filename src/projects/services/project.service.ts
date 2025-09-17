@@ -27,7 +27,7 @@ export class ProjectService {
     private readonly supabaseService: SupabaseService,
     private readonly codebuildService: CodeBuildService,
     private readonly configService: ConfigService,
-  ) { }
+  ) {}
 
   /**
    * 사용자 프로젝트 목록 조회
@@ -145,7 +145,9 @@ export class ProjectService {
       } = body;
 
       // GitHub Installation 확인 (installation_id 또는 github_installation_id로 조회)
-      this.logger.log(`[Project Service] GitHub Installation 조회 시작: userId=${userId}, installationId=${installationId}`);
+      this.logger.log(
+        `[Project Service] GitHub Installation 조회 시작: userId=${userId}, installationId=${installationId}`,
+      );
 
       const { data: installation, error: installError } =
         await this.supabaseService
@@ -153,21 +155,23 @@ export class ProjectService {
           .from('github_installations')
           .select('*')
           .eq('user_id', userId)
-          .or(`installation_id.eq.${installationId},github_installation_id.eq.${installationId}`)
+          .or(
+            `installation_id.eq.${installationId},github_installation_id.eq.${installationId}`,
+          )
           .eq('is_active', true)
           .single();
 
       this.logger.log(`[Project Service] GitHub Installation 조회 결과:`, {
         installation,
         installError: installError?.message,
-        hasInstallation: !!installation
+        hasInstallation: !!installation,
       });
 
       if (installError || !installation) {
         this.logger.error(`[Project Service] GitHub Installation 조회 실패:`, {
           error: installError?.message,
           userId,
-          installationId
+          installationId,
         });
         throw new BadRequestException('유효하지 않은 GitHub 설치 ID입니다');
       }
@@ -204,12 +208,13 @@ export class ProjectService {
 
       // 2. CodeBuild 프로젝트 생성
       try {
-        const codebuildResult = await this.codebuildService.createCodeBuildProject(
-          userId,
-          name,
-          githubRepoUrl,
-          selectedBranch || 'main',
-        );
+        const codebuildResult =
+          await this.codebuildService.createCodeBuildProject(
+            userId,
+            name,
+            githubRepoUrl,
+            selectedBranch || 'main',
+          );
 
         // 3. 성공 시 CodeBuild 정보 업데이트
         const { error: updateError } = await this.supabaseService
@@ -384,12 +389,13 @@ export class ProjectService {
         .eq('project_id', projectId);
 
       try {
-        const codebuildResult = await this.codebuildService.createCodeBuildProject(
-          userId,
-          typedProject.name,
-          typedProject.github_repo_url || '',
-          typedProject.selected_branch || 'main',
-        );
+        const codebuildResult =
+          await this.codebuildService.createCodeBuildProject(
+            userId,
+            typedProject.name,
+            typedProject.github_repo_url || '',
+            typedProject.selected_branch || 'main',
+          );
 
         // 성공 시 CodeBuild 정보 업데이트
         await this.supabaseService
@@ -476,8 +482,12 @@ export class ProjectService {
         region,
         codebuildServiceRole: codebuildServiceRole ? '설정됨' : '누락',
         codebuildArtifactsBucket: codebuildArtifactsBucket ? '설정됨' : '누락',
-        accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID') ? '설정됨' : '누락',
-        secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY') ? '설정됨' : '누락',
+        accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID')
+          ? '설정됨'
+          : '누락',
+        secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY')
+          ? '설정됨'
+          : '누락',
       });
 
       if (!codebuildServiceRole || !codebuildArtifactsBucket) {
