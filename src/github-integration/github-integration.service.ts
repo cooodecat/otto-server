@@ -377,6 +377,13 @@ export class GithubIntegrationService {
   private async getInstallationOctokit(
     installationId: string,
   ): Promise<Octokit> {
+    // GitHub App이 구성되지 않은 경우 에러 발생
+    if (!this.isConfigured) {
+      throw new BadRequestException(
+        'GitHub App이 구성되지 않았습니다. 환경변수를 확인해주세요.',
+      );
+    }
+
     const installationToken = await this.getInstallationToken(installationId);
     return new Octokit({
       auth: installationToken,
@@ -499,6 +506,15 @@ export class GithubIntegrationService {
     installationId: string,
   ): Promise<GitHubRepositoriesResponse> {
     try {
+      // GitHub App 구성 확인
+      if (!this.isConfigured) {
+        this.logger.warn('[getRepositories] GitHub App not configured');
+        return {
+          repositories: [],
+          totalRepositories: 0,
+        };
+      }
+
       // 설치 권한 확인
       const { data: installation, error: installError } =
         await this.supabaseService
@@ -538,7 +554,10 @@ export class GithubIntegrationService {
       };
     } catch (error) {
       this.logger.error('[getRepositories] Error:', error);
-      if (error instanceof NotFoundException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
       throw new BadRequestException('Failed to fetch repositories');
