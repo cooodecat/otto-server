@@ -4,13 +4,12 @@ import {
   Post,
   Param,
   Query,
-  Res,
+  Body,
   Sse,
   MessageEvent,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { Response } from 'express';
 import { Observable, Subject } from 'rxjs';
 import { map, filter } from 'rxjs/operators';
 import { LogsService } from './logs.service';
@@ -21,7 +20,6 @@ import {
   GetAnalyticsDto,
   BuildAnalyticsResponseDto,
 } from './dto/analytics.dto';
-import { Body } from '@nestjs/common';
 
 /**
  * Represents a single log event from CloudWatch Logs API

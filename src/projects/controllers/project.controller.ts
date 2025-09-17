@@ -42,7 +42,10 @@ export class ProjectController {
     @Req() req: { user: AuthenticatedUser },
   ): Promise<ProjectsResponse> {
     try {
-      return await this.projectService.getUserProjects(req.user.id);
+      this.logger.log(`[ProjectController] getUserProjects called for user: ${req.user?.id}`);
+      const result = await this.projectService.getUserProjects(req.user.id);
+      this.logger.log(`[ProjectController] Returning ${result.totalProjects} projects`);
+      return result;
     } catch (error) {
       this.logger.error('Error in getUserProjects:', error);
       throw new HttpException(
@@ -85,6 +88,14 @@ export class ProjectController {
     @Body() body: CreateProjectWithGithubRequest,
   ): Promise<CreateProjectWithGithubResponse> {
     try {
+      this.logger.log(
+        `[Project Controller] 프로젝트 생성 요청 받음: userId=${req.user.id}, projectName=${body.name}`,
+      );
+      this.logger.log(
+        `[Project Controller] 요청 데이터:`,
+        JSON.stringify(body, null, 2),
+      );
+
       return await this.projectService.createProjectWithGithub(
         req.user.id,
         body,

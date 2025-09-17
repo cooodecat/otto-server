@@ -283,8 +283,21 @@ export class CodeBuildService {
     const secretAccessKey = this.configService.get<string>(
       'AWS_SECRET_ACCESS_KEY',
     );
+    const sessionToken = this.configService.get<string>('AWS_SESSION_TOKEN');
 
     // AWS 자격 증명 검증
+    this.logger.log(`[CodeBuildService] AWS 자격 증명 확인:`, {
+      region,
+      accessKeyId: accessKeyId ? `${accessKeyId.substring(0, 10)}...` : '누락',
+      secretAccessKey: secretAccessKey
+        ? `${secretAccessKey.substring(0, 10)}...`
+        : '누락',
+      sessionToken: sessionToken
+        ? `${sessionToken.substring(0, 10)}...`
+        : '누락',
+      isTemporaryCredentials: accessKeyId?.startsWith('ASIA'),
+    });
+
     if (!accessKeyId || !secretAccessKey) {
       throw new Error(
         'AWS credentials are required: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY',
@@ -292,12 +305,36 @@ export class CodeBuildService {
     }
 
     // CodeBuild 클라이언트 초기화
+    const credentials: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      sessionToken?: string;
+    } = {
+      accessKeyId,
+      secretAccessKey,
+    };
+
+    // 임시 자격 증명인 경우 SessionToken 추가
+    if (sessionToken) {
+      credentials.sessionToken = sessionToken;
+      this.logger.log(
+        `[CodeBuildService] 임시 자격 증명 사용 - SessionToken 추가됨`,
+      );
+    } else {
+      this.logger.log(
+        `[CodeBuildService] 영구 자격 증명 사용 - SessionToken 없음`,
+      );
+    }
+
+    this.logger.log(`[CodeBuildService] CodeBuild 클라이언트 초기화:`, {
+      region,
+      hasSessionToken: !!sessionToken,
+      credentialType: sessionToken ? 'Temporary' : 'Permanent',
+    });
+
     this.codeBuildClient = new CodeBuildClient({
       region,
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
+      credentials,
     });
   }
 
@@ -996,11 +1033,25 @@ export class CodeBuildService {
     logGroupName: string;
   }> {
     try {
+      this.logger.log(`[CodeBuildService] createCodeBuildProject 시작:`, {
+        userId,
+        projectName,
+        githubRepoUrl,
+        selectedBranch,
+      });
+
       // 프로젝트명 정리 (특수문자 제거)
       const sanitizedProjectName = projectName.replace(/[^a-zA-Z0-9-]/g, '-');
       const codebuildProjectName = `otto-${sanitizedProjectName}-${userId}`;
       const logGroupName = `otto-${sanitizedProjectName}-${userId}-cloudwatch`;
       const artifactsName = `otto-${sanitizedProjectName}-${userId}-artifacts`;
+
+      this.logger.log(`[CodeBuildService] 프로젝트명 생성:`, {
+        sanitizedProjectName,
+        codebuildProjectName,
+        logGroupName,
+        artifactsName,
+      });
 
       // AWS 설정
       const region =
@@ -1011,6 +1062,16 @@ export class CodeBuildService {
       const codebuildArtifactsBucket = this.configService.get<string>(
         'CODEBUILD_ARTIFACTS_BUCKET',
       );
+
+      this.logger.log(`[CodeBuildService] AWS 설정 확인:`, {
+        region,
+        codebuildServiceRole: codebuildServiceRole
+          ? `${codebuildServiceRole.substring(0, 20)}...`
+          : '누락',
+        codebuildArtifactsBucket: codebuildArtifactsBucket
+          ? `${codebuildArtifactsBucket.substring(0, 20)}...`
+          : '누락',
+      });
 
       if (!codebuildServiceRole || !codebuildArtifactsBucket) {
         throw new Error(
@@ -1027,6 +1088,7 @@ export class CodeBuildService {
           type: 'GITHUB',
           location: githubRepoUrl,
           buildspec: buildspec,
+          // GitHub App 인증 없이 사용 가능
         },
         sourceVersion: `refs/heads/${selectedBranch}`,
         artifacts: {
@@ -1050,21 +1112,40 @@ export class CodeBuildService {
         },
       });
 
-      const result = await this.codeBuildClient.send(createProjectCommand);
+      this.logger.log(`[CodeBuildService] CreateProjectCommand 생성 완료:`, {
+        projectName: codebuildProjectName,
+        githubRepoUrl,
+        selectedBranch,
+        serviceRole: codebuildServiceRole,
+        region,
+      });
 
-      if (!result.project?.arn || !result.project?.name) {
+      this.logger.log(`[CodeBuildService] AWS CodeBuild API 호출 시작...`);
+
+      const createProjectResult =
+        await this.codeBuildClient.send(createProjectCommand);
+
+      this.logger.log(`[CodeBuildService] AWS CodeBuild API 호출 성공:`, {
+        projectArn: createProjectResult.project?.arn,
+        projectName: createProjectResult.project?.name,
+      });
+
+      if (
+        !createProjectResult.project?.arn ||
+        !createProjectResult.project?.name
+      ) {
         throw new Error(
           'CodeBuild 프로젝트 생성 실패: 프로젝트 정보가 누락되었습니다',
         );
       }
 
       this.logger.log(
-        `CodeBuild 프로젝트 생성 완료: ${result.project.name} (ARN: ${result.project.arn})`,
+        `CodeBuild 프로젝트 생성 완료: ${createProjectResult.project.name} (ARN: ${createProjectResult.project.arn})`,
       );
 
       return {
-        projectName: result.project.name,
-        projectArn: result.project.arn,
+        projectName: createProjectResult.project.name,
+        projectArn: createProjectResult.project.arn,
         logGroupName,
       };
     } catch (error) {

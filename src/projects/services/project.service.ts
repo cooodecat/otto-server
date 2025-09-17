@@ -34,6 +34,8 @@ export class ProjectService {
    */
   async getUserProjects(userId: string): Promise<ProjectsResponse> {
     try {
+      this.logger.log(`[ProjectService] getUserProjects called for userId: ${userId}`);
+
       const { data: projects, error } = await this.supabaseService
         .getClient()
         .from('projects')
@@ -61,6 +63,8 @@ export class ProjectService {
         this.logger.error('Failed to fetch projects:', error);
         throw new BadRequestException('Failed to fetch projects');
       }
+
+      this.logger.log(`[ProjectService] Found ${projects?.length || 0} projects for userId: ${userId}`);
 
       const typedProjects = this.validateProjects(projects);
 
@@ -144,18 +148,35 @@ export class ProjectService {
         selectedBranch,
       } = body;
 
-      // GitHub Installation 확인
+      // GitHub Installation 확인 (installation_id 또는 github_installation_id로 조회)
+      this.logger.log(
+        `[Project Service] GitHub Installation 조회 시작: userId=${userId}, installationId=${installationId}`,
+      );
+
       const { data: installation, error: installError } =
         await this.supabaseService
           .getClient()
           .from('github_installations')
           .select('*')
           .eq('user_id', userId)
-          .eq('installation_id', installationId)
+          .or(
+            `installation_id.eq.${installationId},github_installation_id.eq.${installationId}`,
+          )
           .eq('is_active', true)
           .single();
 
+      this.logger.log(`[Project Service] GitHub Installation 조회 결과:`, {
+        installation,
+        installError: installError?.message,
+        hasInstallation: !!installation,
+      });
+
       if (installError || !installation) {
+        this.logger.error(`[Project Service] GitHub Installation 조회 실패:`, {
+          error: installError?.message,
+          userId,
+          installationId,
+        });
         throw new BadRequestException('유효하지 않은 GitHub 설치 ID입니다');
       }
 
@@ -191,12 +212,13 @@ export class ProjectService {
 
       // 2. CodeBuild 프로젝트 생성
       try {
-        const codebuildResult = await this.createCodeBuildProject(
-          name,
-          githubRepoUrl,
-          selectedBranch || 'main',
-          userId,
-        );
+        const codebuildResult =
+          await this.codebuildService.createCodeBuildProject(
+            userId,
+            name,
+            githubRepoUrl,
+            selectedBranch || 'main',
+          );
 
         // 3. 성공 시 CodeBuild 정보 업데이트
         const { error: updateError } = await this.supabaseService
@@ -371,12 +393,13 @@ export class ProjectService {
         .eq('project_id', projectId);
 
       try {
-        const codebuildResult = await this.createCodeBuildProject(
-          typedProject.name,
-          typedProject.github_repo_url || '',
-          typedProject.selected_branch || 'main',
-          userId,
-        );
+        const codebuildResult =
+          await this.codebuildService.createCodeBuildProject(
+            userId,
+            typedProject.name,
+            typedProject.github_repo_url || '',
+            typedProject.selected_branch || 'main',
+          );
 
         // 성공 시 CodeBuild 정보 업데이트
         await this.supabaseService
@@ -459,6 +482,18 @@ export class ProjectService {
         'CODEBUILD_ARTIFACTS_BUCKET',
       );
 
+      this.logger.log(`[CodeBuild] AWS 설정 확인:`, {
+        region,
+        codebuildServiceRole: codebuildServiceRole ? '설정됨' : '누락',
+        codebuildArtifactsBucket: codebuildArtifactsBucket ? '설정됨' : '누락',
+        accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID')
+          ? '설정됨'
+          : '누락',
+        secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY')
+          ? '설정됨'
+          : '누락',
+      });
+
       if (!codebuildServiceRole || !codebuildArtifactsBucket) {
         throw new Error(
           'AWS CodeBuild 설정이 누락되었습니다: AWS_CODEBUILD_SERVICE_ROLE, CODEBUILD_ARTIFACTS_BUCKET',
@@ -501,7 +536,19 @@ export class ProjectService {
       const payloadString = JSON.stringify(payload);
       const host = `codebuild.${region}.amazonaws.com`;
       const path = '/';
-      const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
+      const now = new Date();
+      const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+
+      this.logger.log(`[CodeBuild] 요청 페이로드:`, {
+        projectName: codebuildProjectName,
+        githubRepoUrl,
+        selectedBranch,
+        serviceRole: codebuildServiceRole,
+        artifactsBucket: codebuildArtifactsBucket,
+        region,
+        host,
+        amzDate,
+      });
 
       const headers = {
         Host: host,
@@ -539,9 +586,10 @@ export class ProjectService {
           status: response.status,
           statusText: response.statusText,
           body: errorText,
+          payload: payload,
         });
         throw new Error(
-          `CodeBuild project creation failed: ${response.status} ${response.statusText}`,
+          `CodeBuild project creation failed: ${response.status} ${response.statusText} - ${errorText}`,
         );
       }
 
@@ -610,9 +658,18 @@ artifacts:
     secretAccessKey: string,
   ): Promise<string> {
     const algorithm = 'AWS4-HMAC-SHA256';
-    const date = new Date();
-    const dateStamp = date.toISOString().slice(0, 10).replace(/-/g, '');
-    const amzDate = date.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const now = new Date();
+    const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+
+    this.logger.log(`[CodeBuild] Signature 생성:`, {
+      dateStamp,
+      amzDate,
+      region,
+      service,
+      accessKeyId: accessKeyId ? '설정됨' : '누락',
+      secretAccessKey: secretAccessKey ? '설정됨' : '누락',
+    });
 
     const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
 
