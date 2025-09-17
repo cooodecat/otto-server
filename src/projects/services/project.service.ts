@@ -38,22 +38,6 @@ export class ProjectService {
         `[ProjectService] Fetching projects for userId: ${userId}`,
       );
 
-      // 먼저 모든 프로젝트를 확인 (디버깅용)
-      const { data: allProjects } = await this.supabaseService
-        .getClient()
-        .from('projects')
-        .select('project_id, name, user_id');
-
-      this.logger.log(
-        `[ProjectService] Total projects in DB: ${allProjects?.length || 0}`,
-      );
-
-      if (allProjects && allProjects.length > 0) {
-        this.logger.log(
-          `[ProjectService] All project user_ids: ${allProjects.map((p) => p.user_id).join(', ')}`,
-        );
-      }
-
       // 사용자의 프로젝트 조회
       const { data: projects, error } = await this.supabaseService
         .getClient()
@@ -87,13 +71,6 @@ export class ProjectService {
       this.logger.log(
         `[ProjectService] Found ${projects?.length || 0} projects for userId: ${userId}`,
       );
-
-      // userId가 일치하지 않는 경우를 위한 추가 로그
-      if (projects?.length === 0 && allProjects && allProjects.length > 0) {
-        this.logger.warn(
-          `[ProjectService] No projects found for userId: ${userId}, but there are ${allProjects.length} projects in DB`,
-        );
-      }
 
       const typedProjects = this.validateProjects(projects);
 
@@ -349,10 +326,7 @@ export class ProjectService {
         throw new BadRequestException('No valid fields to update');
       }
 
-      this.logger.log(
-        `Updating project ${projectId} with:`,
-        allowedUpdates,
-      );
+      this.logger.log(`Updating project ${projectId} with:`, allowedUpdates);
 
       // 프로젝트 업데이트
       const { data: updatedProject, error: updateError } =
@@ -445,7 +419,10 @@ export class ProjectService {
         .eq('user_id', userId); // 추가 보안: user_id도 확인
 
       if (deleteError) {
-        this.logger.error('Failed to delete project from database:', deleteError);
+        this.logger.error(
+          'Failed to delete project from database:',
+          deleteError,
+        );
         throw new BadRequestException('Failed to delete project');
       }
 
