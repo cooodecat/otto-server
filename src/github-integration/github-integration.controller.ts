@@ -2,11 +2,13 @@ import {
   Controller,
   Get,
   Param,
+  Query,
   Req,
   UseGuards,
   HttpException,
   HttpStatus,
   Logger,
+  Header,
 } from '@nestjs/common';
 import { SupabaseAuthGuard } from '../supabase/guards/supabase-auth.guard';
 import { GithubIntegrationService } from './github-integration.service';
@@ -25,8 +27,7 @@ export class GithubIntegrationController {
 
   constructor(
     private readonly githubIntegrationService: GithubIntegrationService,
-  ) { }
-
+  ) {}
 
   /**
    * @tag github-integration
@@ -34,6 +35,9 @@ export class GithubIntegrationController {
    */
   @Get('github-installations')
   @UseGuards(SupabaseAuthGuard)
+  @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
+  @Header('Pragma', 'no-cache')
+  @Header('Expires', '0')
   async getGitHubInstallations(
     @Req() req: { user: AuthenticatedUser },
   ): Promise<GitHubInstallationsResponse> {
@@ -58,9 +62,13 @@ export class GithubIntegrationController {
   @UseGuards(SupabaseAuthGuard)
   getGithubInstallUrl(
     @Req() req: { user: AuthenticatedUser },
+    @Query('returnUrl') returnUrl?: string,
   ): GitHubInstallUrlResponse {
     try {
-      return this.githubIntegrationService.getGithubInstallUrl(req.user.id);
+      return this.githubIntegrationService.getGithubInstallUrl(
+        req.user.id,
+        returnUrl,
+      );
     } catch (error) {
       this.logger.error('Error in getGithubInstallUrl:', error);
       throw new HttpException(
@@ -76,6 +84,9 @@ export class GithubIntegrationController {
    */
   @Get('github/status')
   @UseGuards(SupabaseAuthGuard)
+  @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
+  @Header('Pragma', 'no-cache')
+  @Header('Expires', '0')
   async getGithubStatus(
     @Req() req: { user: AuthenticatedUser },
   ): Promise<GitHubStatusResponse> {
@@ -121,18 +132,22 @@ export class GithubIntegrationController {
    * @tag github-integration
    * @summary 저장소의 브랜치 목록 조회
    */
-  @Get('github-installations/:installationId/repositories/:repo/branches')
+  @Get(
+    'github-installations/:installationId/repositories/:owner/:repo/branches',
+  )
   @UseGuards(SupabaseAuthGuard)
   async getBranches(
     @Req() req: { user: AuthenticatedUser },
     @Param('installationId') installationId: string,
+    @Param('owner') owner: string,
     @Param('repo') repo: string,
   ): Promise<GitHubBranchesResponse> {
     try {
+      const repoFullName = `${owner}/${repo}`;
       return await this.githubIntegrationService.getBranches(
         req.user.id,
         installationId,
-        repo,
+        repoFullName,
       );
     } catch (error) {
       this.logger.error('Error in getBranches:', error);
@@ -143,6 +158,143 @@ export class GithubIntegrationController {
         'Failed to fetch branches',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
+    }
+  }
+
+  /**
+   * @tag github-integration
+   * @summary 모든 사용자 레포지토리 조회
+   */
+  @Get('github/repositories')
+  @UseGuards(SupabaseAuthGuard)
+  async getAllRepositories(
+    @Req() req: { user: AuthenticatedUser },
+  ): Promise<GitHubRepositoriesResponse> {
+    try {
+      return await this.githubIntegrationService.getAllUserRepositories(
+        req.user.id,
+      );
+    } catch (error) {
+      this.logger.error('Error in getAllRepositories:', error);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        'Failed to fetch repositories',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * @tag github-integration
+   * @summary 더미 데이터 정리
+   */
+  @Get('github/cleanup-dummy-data')
+  @UseGuards(SupabaseAuthGuard)
+  async cleanupDummyData(
+    @Req() req: { user: AuthenticatedUser },
+  ): Promise<{ success: boolean; deleted: number; errors: string[] }> {
+    try {
+      this.logger.log(
+        `[cleanupDummyData] Starting cleanup for user: ${req.user.id}`,
+      );
+
+      const result =
+        await this.githubIntegrationService.cleanupDummyInstallations(
+          req.user.id,
+        );
+
+      return {
+        success: true,
+        deleted: result.deleted,
+        errors: result.errors,
+      };
+    } catch (error) {
+      this.logger.error('Error in cleanupDummyData:', error);
+      throw new HttpException(
+        'Failed to cleanup dummy data',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * @tag github-integration
+   * @summary 유효하지 않은 설치 비활성화
+   */
+  @Get('github/validate-installations')
+  @UseGuards(SupabaseAuthGuard)
+  async validateInstallations(
+    @Req() req: { user: AuthenticatedUser },
+  ): Promise<{ success: boolean; deactivated: number; errors: string[] }> {
+    try {
+      this.logger.log(
+        `[validateInstallations] Starting validation for user: ${req.user.id}`,
+      );
+
+      const result =
+        await this.githubIntegrationService.deactivateInvalidInstallations(
+          req.user.id,
+        );
+
+      return {
+        success: true,
+        deactivated: result.deactivated,
+        errors: result.errors,
+      };
+    } catch (error) {
+      this.logger.error('Error in validateInstallations:', error);
+      throw new HttpException(
+        'Failed to validate installations',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * @tag github-integration
+   * @summary 테스트: 첫 번째 설치의 레포지토리 자동 조회
+   */
+  @Get('github/test-repos')
+  @UseGuards(SupabaseAuthGuard)
+  async testGetRepositories(
+    @Req() req: { user: AuthenticatedUser },
+  ): Promise<any> {
+    try {
+      this.logger.log(`[testGetRepositories] Testing for user: ${req.user.id}`);
+
+      // 먼저 사용자의 설치 정보 가져오기
+      const statusResponse =
+        await this.githubIntegrationService.getGithubStatus(req.user.id);
+
+      if (
+        !statusResponse.hasInstallation ||
+        statusResponse.installations.length === 0
+      ) {
+        return { error: 'No GitHub installations found' };
+      }
+
+      const firstInstallation = statusResponse.installations[0];
+      this.logger.log(
+        `[testGetRepositories] Using installation: ${firstInstallation.installation_id}`,
+      );
+
+      // 첫 번째 설치의 레포지토리 조회
+      const reposResponse = await this.githubIntegrationService.getRepositories(
+        req.user.id,
+        firstInstallation.installation_id,
+      );
+
+      return {
+        installation: firstInstallation,
+        repositories: reposResponse,
+      };
+    } catch (error) {
+      this.logger.error('Error in testGetRepositories:', error);
+      return {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
     }
   }
 }

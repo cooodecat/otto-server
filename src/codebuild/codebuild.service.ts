@@ -49,14 +49,14 @@ export interface BuildSpecInput {
       files: string[];
       /** 파일 형식 */
       'file-format'?:
-      | 'JUNITXML'
-      | 'CUCUMBERJSON'
-      | 'TESTNGXML'
-      | 'CLOVERXML'
-      | 'VISUALSTUDIOTRX'
-      | 'JACOCOXML'
-      | 'NUNITXML'
-      | 'NUNIT3XML';
+        | 'JUNITXML'
+        | 'CUCUMBERJSON'
+        | 'TESTNGXML'
+        | 'CLOVERXML'
+        | 'VISUALSTUDIOTRX'
+        | 'JACOCOXML'
+        | 'NUNITXML'
+        | 'NUNIT3XML';
       /** 기본 디렉토리 */
       'base-directory'?: string;
       /** 경로 제거 여부 */
@@ -364,10 +364,10 @@ export class CodeBuildService {
         buildspecOverride: buildSpecOverride,
         environmentVariablesOverride: environmentVariables
           ? Object.entries(environmentVariables).map(([name, value]) => ({
-            name,
-            value,
-            type: 'PLAINTEXT',
-          }))
+              name,
+              value,
+              type: 'PLAINTEXT',
+            }))
           : undefined,
       });
 
@@ -666,7 +666,7 @@ export class CodeBuildService {
         },
       });
 
-      const result = await this.codeBuildClient.send(createProjectCommand) as CreateProjectCommandOutput;
+      const result = await this.codeBuildClient.send(createProjectCommand);
 
       if (!result.project?.arn || !result.project?.name) {
         throw new Error(

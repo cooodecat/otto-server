@@ -144,14 +144,14 @@ export class ProjectService {
         selectedBranch,
       } = body;
 
-      // GitHub Installation 확인
+      // GitHub Installation 확인 (installation_id 또는 github_installation_id로 조회)
       const { data: installation, error: installError } =
         await this.supabaseService
           .getClient()
           .from('github_installations')
           .select('*')
           .eq('user_id', userId)
-          .eq('installation_id', installationId)
+          .or(`installation_id.eq.${installationId},github_installation_id.eq.${installationId}`)
           .eq('is_active', true)
           .single();
 
