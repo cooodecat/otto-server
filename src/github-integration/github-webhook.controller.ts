@@ -11,7 +11,10 @@ import {
 import { createHmac } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { ConfigService } from '@nestjs/config';
-import type { GithubWebhookPayload, GithubRepository } from './types/webhook.types';
+import type {
+  GithubWebhookPayload,
+  GithubRepository,
+} from './types/webhook.types';
 
 @Controller('github')
 export class GithubWebhookController {
@@ -58,13 +61,13 @@ export class GithubWebhookController {
           await this.handleInstallation(payload);
           break;
         case 'installation_repositories':
-          await this.handleInstallationRepositories(payload);
+          this.handleInstallationRepositories(payload);
           break;
         case 'push':
-          await this.handlePush(payload);
+          this.handlePush(payload);
           break;
         case 'pull_request':
-          await this.handlePullRequest(payload);
+          this.handlePullRequest(payload);
           break;
         default:
           this.logger.log(
@@ -127,7 +130,7 @@ export class GithubWebhookController {
         return;
       }
 
-      const user = users[0];
+      const user = users[0] as { id: string };
 
       // Installation 정보 저장
       const { data: existingInstall } = await client
@@ -191,7 +194,7 @@ export class GithubWebhookController {
    * - added: 저장소 추가
    * - removed: 저장소 제거
    */
-  private async handleInstallationRepositories(payload: GithubWebhookPayload) {
+  private handleInstallationRepositories(payload: GithubWebhookPayload) {
     const { action, installation, repositories_added, repositories_removed } =
       payload;
 
@@ -226,8 +229,8 @@ export class GithubWebhookController {
   /**
    * Push 이벤트 처리
    */
-  private async handlePush(payload: GithubWebhookPayload) {
-    const { repository, ref, pusher, commits } = payload;
+  private handlePush(payload: GithubWebhookPayload) {
+    const { repository, ref, pusher } = payload;
 
     if (!repository || !pusher) {
       this.logger.warn('[GitHub Webhook] Missing repository or pusher data');
@@ -244,11 +247,13 @@ export class GithubWebhookController {
   /**
    * Pull Request 이벤트 처리
    */
-  private async handlePullRequest(payload: GithubWebhookPayload) {
+  private handlePullRequest(payload: GithubWebhookPayload) {
     const { action, pull_request, repository } = payload;
 
     if (!repository || !pull_request) {
-      this.logger.warn('[GitHub Webhook] Missing repository or pull_request data');
+      this.logger.warn(
+        '[GitHub Webhook] Missing repository or pull_request data',
+      );
       return;
     }
 
