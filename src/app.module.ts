@@ -9,6 +9,7 @@ import { BuildsModule } from './builds/builds.module';
 import { CloudWatchLogsModule } from './cloudwatch-logs/cloudwatch-logs.module';
 import { GithubIntegrationModule } from './github-integration/github-integration.module';
 import { ProjectsModule } from './projects/projects.module';
+import { LogsModule } from './logs/logs.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { ProjectsModule } from './projects/projects.module';
     CloudWatchLogsModule,
     GithubIntegrationModule,
     ProjectsModule,
+    LogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
