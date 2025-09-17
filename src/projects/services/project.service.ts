@@ -35,15 +35,17 @@ export class ProjectService {
   async getUserProjects(userId: string): Promise<ProjectsResponse> {
     try {
       this.logger.log(
-        `[ProjectService] getUserProjects called for userId: ${userId}`,
+        `[ProjectService] Fetching projects for userId: ${userId}`,
       );
 
+      // 사용자의 프로젝트 조회
       const { data: projects, error } = await this.supabaseService
         .getClient()
         .from('projects')
         .select(
           `
           project_id,
+          user_id,
           name,
           description,
           github_owner,
@@ -96,6 +98,7 @@ export class ProjectService {
         .select(
           `
           project_id,
+          user_id,
           name,
           description,
           github_owner,
@@ -306,6 +309,7 @@ export class ProjectService {
     updates: UpdateProjectRequest,
   ): Promise<UpdateProjectResponse> {
     try {
+      // 먼저 프로젝트가 사용자의 것인지 확인
       const { data: project, error } = await this.supabaseService
         .getClient()
         .from('projects')
@@ -318,13 +322,39 @@ export class ProjectService {
         throw new NotFoundException('Project not found');
       }
 
+      // 업데이트 가능한 필드만 추출 (name, description, selected_branch)
+      const allowedUpdates: Partial<{
+        name: string;
+        description: string;
+        selected_branch: string;
+      }> = {};
+
+      if (updates.name !== undefined) {
+        allowedUpdates.name = updates.name;
+      }
+      if (updates.description !== undefined) {
+        allowedUpdates.description = updates.description;
+      }
+      if (updates.selectedBranch !== undefined) {
+        allowedUpdates.selected_branch = updates.selectedBranch;
+      }
+
+      // 업데이트할 내용이 없으면 에러
+      if (Object.keys(allowedUpdates).length === 0) {
+        throw new BadRequestException('No valid fields to update');
+      }
+
+      this.logger.log(`Updating project ${projectId} with:`, allowedUpdates);
+
+      // 프로젝트 업데이트
       const { data: updatedProject, error: updateError } =
         await this.supabaseService
           .getClient()
           .from('projects')
-          .update(updates)
+          .update(allowedUpdates)
           .eq('project_id', projectId)
-          .select()
+          .eq('user_id', userId) // 추가 보안: user_id도 확인
+          .select('*')
           .single();
 
       if (updateError) {
@@ -351,29 +381,70 @@ export class ProjectService {
     projectId: string,
   ): Promise<DeleteProjectResponse> {
     try {
+      this.logger.log(
+        `Starting project deletion - userId: ${userId}, projectId: ${projectId}`,
+      );
+
+      // 프로젝트 정보 조회 (CodeBuild 프로젝트명 포함)
       const { data: project, error } = await this.supabaseService
         .getClient()
         .from('projects')
-        .select('project_id')
+        .select('project_id, name, codebuild_project_name')
         .eq('user_id', userId)
         .eq('project_id', projectId)
         .single();
 
       if (error || !project) {
+        this.logger.error(
+          `Project not found - userId: ${userId}, projectId: ${projectId}`,
+        );
         throw new NotFoundException('Project not found');
       }
 
+      this.logger.log(`Deleting project: ${project.name}`);
+
+      // CodeBuild 프로젝트 삭제 (실패해도 계속 진행)
+      if (project.codebuild_project_name) {
+        try {
+          this.logger.log(
+            `Deleting CodeBuild project: ${project.codebuild_project_name}`,
+          );
+          await this.codebuildService.deleteCodeBuildProject(
+            project.codebuild_project_name,
+          );
+          this.logger.log(
+            `Successfully deleted CodeBuild project: ${project.codebuild_project_name}`,
+          );
+        } catch (codebuildError) {
+          // CodeBuild 삭제 실패는 로그만 남기고 계속 진행
+          this.logger.warn(
+            `Failed to delete CodeBuild project ${project.codebuild_project_name}, continuing with database deletion:`,
+            codebuildError,
+          );
+        }
+      } else {
+        this.logger.log(
+          'No CodeBuild project name found, skipping CodeBuild deletion',
+        );
+      }
+
+      // 데이터베이스에서 프로젝트 삭제
       const { error: deleteError } = await this.supabaseService
         .getClient()
         .from('projects')
         .delete()
-        .eq('project_id', projectId);
+        .eq('project_id', projectId)
+        .eq('user_id', userId); // 추가 보안: user_id도 확인
 
       if (deleteError) {
-        this.logger.error('Failed to delete project:', deleteError);
+        this.logger.error(
+          'Failed to delete project from database:',
+          deleteError,
+        );
         throw new BadRequestException('Failed to delete project');
       }
 
+      this.logger.log(`Successfully deleted project: ${project.name}`);
       return { message: 'Project deleted successfully' };
     } catch (error) {
       this.logger.error('Error in deleteProject:', error);

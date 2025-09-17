@@ -43,7 +43,7 @@ export class ProjectController {
   ): Promise<ProjectsResponse> {
     try {
       this.logger.log(
-        `[ProjectController] getUserProjects called for user: ${req.user?.id}`,
+        `[ProjectController] GET /projects - userId: ${req.user?.id}`,
       );
       const result = await this.projectService.getUserProjects(req.user.id);
       this.logger.log(

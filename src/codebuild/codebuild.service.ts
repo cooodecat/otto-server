@@ -5,7 +5,7 @@ import {
   StartBuildCommand,
   BatchGetBuildsCommand,
   CreateProjectCommand,
-  CreateProjectCommandOutput,
+  DeleteProjectCommand,
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
@@ -1191,6 +1191,52 @@ export class CodeBuildService {
     } catch (error) {
       this.logger.error(`CodeBuild 프로젝트 생성 실패: ${projectName}`, error);
       throw error;
+    }
+  }
+
+  /**
+   * CodeBuild 프로젝트를 삭제합니다
+   *
+   * 프로젝트 삭제 시 연동된 AWS CodeBuild 프로젝트를 삭제합니다.
+   * 에러가 발생해도 예외를 발생시키지 않고 로그만 남깁니다.
+   *
+   * @param codebuildProjectName - CodeBuild 프로젝트 이름
+   * @returns 삭제 성공 여부
+   *
+   * @example
+   * ```typescript
+   * const success = await codeBuildService.deleteCodeBuildProject(
+   *   'otto-my-project-user-123'
+   * );
+   * console.log(success); // true or false
+   * ```
+   */
+  async deleteCodeBuildProject(codebuildProjectName: string): Promise<boolean> {
+    try {
+      this.logger.log(`[CodeBuildService] deleteCodeBuildProject 시작:`, {
+        codebuildProjectName,
+      });
+
+      const deleteProjectCommand = new DeleteProjectCommand({
+        name: codebuildProjectName,
+      });
+
+      this.logger.log(
+        `[CodeBuildService] AWS CodeBuild 프로젝트 삭제 API 호출 시작...`,
+      );
+
+      await this.codeBuildClient.send(deleteProjectCommand);
+
+      this.logger.log(`CodeBuild 프로젝트 삭제 완료: ${codebuildProjectName}`);
+
+      return true;
+    } catch (error) {
+      // CodeBuild 프로젝트가 존재하지 않는 경우나 다른 에러의 경우 로그만 남기고 계속 진행
+      this.logger.warn(
+        `CodeBuild 프로젝트 삭제 실패 (계속 진행): ${codebuildProjectName}`,
+        error,
+      );
+      return false;
     }
   }
 
