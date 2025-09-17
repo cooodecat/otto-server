@@ -1,11 +1,10 @@
 export interface GitHubInstallation {
-  id: string;
   installation_id: string;
   user_id: string;
+  account_id: string;
   account_login: string;
-  account_id: number;
   account_type: string;
-  setup_action: string;
+  github_installation_id: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
