@@ -75,6 +75,36 @@ async function bootstrap() {
 
   // Simple startup message
   logger.log(`Server is running on port ${port}`);
+
+  // Keep the process alive for Railway
+  process.on('SIGINT', () => {
+    logger.log('Received SIGINT, shutting down gracefully...');
+    app
+      .close()
+      .then(() => {
+        process.exit(0);
+      })
+      .catch((err) => {
+        logger.error('Error during shutdown:', err);
+        process.exit(1);
+      });
+  });
+
+  process.on('SIGTERM', () => {
+    logger.log('Received SIGTERM, shutting down gracefully...');
+    app
+      .close()
+      .then(() => {
+        process.exit(0);
+      })
+      .catch((err) => {
+        logger.error('Error during shutdown:', err);
+        process.exit(1);
+      });
+  });
 }
 
-void bootstrap();
+bootstrap().catch((error) => {
+  console.error('Failed to start application:', error);
+  process.exit(1);
+});

@@ -35,8 +35,8 @@ RUN pnpm install --frozen-lockfile --prod
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Expose port
-EXPOSE 4000
+# Expose port (Railway will override this with PORT env var)
+EXPOSE 8080
 
-# Start the application
+# Start the application with proper signal handling
 CMD ["node", "dist/main"]
