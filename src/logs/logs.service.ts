@@ -94,7 +94,6 @@ function normalizeLogEvent(event: LogEvent): NormalizedLogEvent {
   }
 
   // Level 추론
-  const lower = msg.toLowerCase();
   let level: NormalizedLogEvent['level'] = 'INFO';
   if (/(error|failed)/i.test(msg)) level = 'ERROR';
   else if (/(warn|warning)/i.test(msg)) level = 'WARN';
@@ -1482,6 +1481,231 @@ export class LogsService implements OnModuleDestroy {
       query: searchOptions.query,
       regex: searchOptions.regex || false,
     };
+  }
+
+  /**
+   * 프로젝트 ID로 빌드 히스토리와 메타데이터 조회
+   *
+   * 프로젝트의 모든 빌드 히스토리와 각 빌드의 메타데이터를 조회합니다.
+   *
+   * @param projectId - 프로젝트 ID
+   * @param options - 페이지네이션 옵션
+   * @returns 빌드 히스토리와 메타데이터 목록
+   */
+  async getProjectBuildHistories(
+    projectId: string,
+    options: {
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<{
+    builds: Array<{
+      id: string;
+      buildId: string;
+      buildNumber?: number;
+      status: string;
+      buildExecutionStatus?: string;
+      trigger: {
+        type: string;
+        author?: string;
+        timestamp?: string;
+      };
+      repository: {
+        branch?: string;
+        commitHash?: string;
+        commitMessage?: string;
+      };
+      phases: Array<{
+        name: string;
+        status: string;
+        startTime?: string;
+        endTime?: string;
+        duration?: string;
+      }>;
+      metrics: {
+        totalLines: number;
+        errorCount: number;
+        warningCount: number;
+        infoCount: number;
+        fileSize: number;
+      };
+      isArchived: boolean;
+      archivedAt?: string;
+      startTime?: string;
+      endTime?: string;
+      duration?: string;
+      projectId?: string;
+      userId?: string;
+      logsUrl?: string;
+      errorMessage?: string;
+    }>;
+    total: number;
+  }> {
+    try {
+      const limit = options.limit || 20;
+      const offset = options.offset || 0;
+
+      // 프로젝트의 빌드 히스토리 조회
+      const {
+        data: buildHistories,
+        error: bhError,
+        count,
+      } = await this.supabaseService
+        .getClient()
+        .from('build_histories')
+        .select('*, build_execution_phases(*)', { count: 'exact' })
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (bhError) {
+        this.logger.error(
+          `Failed to get build histories for project ${projectId}:`,
+          bhError,
+        );
+        return { builds: [], total: 0 };
+      }
+
+      if (!buildHistories || buildHistories.length === 0) {
+        return { builds: [], total: count || 0 };
+      }
+
+      // 각 빌드의 메타데이터를 가져와서 매핑
+      interface BuildHistory {
+        id: string;
+        aws_build_id?: string;
+        build_number?: number;
+        build_execution_status?: string;
+        environment_variables?: Record<string, string>;
+        user_id?: string;
+        created_at?: string;
+        start_time?: string;
+        end_time?: string;
+        duration_seconds?: number;
+        project_id?: string;
+        cloudwatch_logs_arn?: string;
+        error_output?: string;
+        build_execution_phases?: Array<{
+          phase_type: string;
+          phase_status: string;
+          phase_start_time: string | null;
+          phase_end_time: string | null;
+          phase_duration_seconds: number | null;
+        }>;
+      }
+
+      const builds = await Promise.all(
+        (buildHistories as BuildHistory[]).map(async (build) => {
+          // log_archives 조회
+          const { data: archive } = await this.supabaseService
+            .getClient()
+            .from('log_archives')
+            .select('*')
+            .eq('build_history_id', build.id)
+            .single();
+
+          // 빌드 상태 매핑 (DB는 소문자로 저장)
+          let status = 'UNKNOWN';
+          const execStatus = build.build_execution_status?.toUpperCase();
+
+          if (execStatus === 'SUCCEEDED') status = 'SUCCESS';
+          else if (execStatus === 'FAILED') status = 'FAILED';
+          else if (execStatus === 'STOPPED') status = 'STOPPED';
+          else if (execStatus === 'IN_PROGRESS') status = 'RUNNING';
+          else if (execStatus === 'PENDING') status = 'PENDING';
+          else if (execStatus === 'TIMED_OUT') status = 'TIMED_OUT';
+          else if (execStatus) status = execStatus;
+
+          // 환경변수에서 트리거 정보 추출
+          const envVars = build.environment_variables;
+          let triggerType = 'Manual';
+          let triggerAuthor = build.user_id;
+
+          if (envVars?.GITHUB_EVENT_NAME === 'push') {
+            triggerType = 'GitHub Push';
+            triggerAuthor = envVars.GITHUB_ACTOR || triggerAuthor;
+          }
+
+          // 리포지토리 정보
+          const repository = {
+            branch: envVars?.GITHUB_REF_NAME || envVars?.BRANCH_NAME,
+            commitHash: envVars?.GITHUB_SHA || envVars?.COMMIT_ID,
+            commitMessage: envVars?.COMMIT_MESSAGE,
+          };
+
+          // 단계별 정보
+          interface BuildPhase {
+            phase_type: string;
+            phase_status: string;
+            phase_start_time: string | null;
+            phase_end_time: string | null;
+            phase_duration_seconds: number | null;
+          }
+
+          const phases = (
+            (build.build_execution_phases as BuildPhase[]) || []
+          ).map((phase) => ({
+            name: phase.phase_type,
+            status: phase.phase_status,
+            startTime: phase.phase_start_time || undefined,
+            endTime: phase.phase_end_time || undefined,
+            duration: phase.phase_duration_seconds
+              ? `${phase.phase_duration_seconds}s`
+              : undefined,
+          }));
+
+          // 메트릭 정보
+          const metrics = {
+            totalLines: archive?.total_log_lines || 0,
+            errorCount: archive?.error_count || 0,
+            warningCount: archive?.warning_count || 0,
+            infoCount: archive?.info_count || 0,
+            fileSize: archive?.file_size_bytes || 0,
+          };
+
+          // 기간 계산
+          let duration: string | undefined;
+          if (build.duration_seconds) {
+            const minutes = Math.floor(build.duration_seconds / 60);
+            const seconds = build.duration_seconds % 60;
+            duration = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+          }
+
+          return {
+            id: build.id,
+            buildId: build.aws_build_id || build.id,
+            buildNumber: build.build_number,
+            status,
+            buildExecutionStatus: build.build_execution_status, // 원본 상태도 포함 (디버깅용)
+            trigger: {
+              type: triggerType,
+              author: triggerAuthor,
+              timestamp: build.created_at,
+            },
+            repository,
+            phases,
+            metrics,
+            isArchived: !!archive,
+            archivedAt: archive?.created_at,
+            startTime: build.start_time,
+            endTime: build.end_time,
+            duration,
+            projectId: build.project_id,
+            userId: build.user_id,
+            logsUrl: build.cloudwatch_logs_arn,
+            errorMessage: build.error_output,
+          };
+        }),
+      );
+
+      return {
+        builds,
+        total: count || 0,
+      };
+    } catch (error) {
+      this.logger.error(`Error getting project build histories:`, error);
+      return { builds: [], total: 0 };
+    }
   }
 
   /**

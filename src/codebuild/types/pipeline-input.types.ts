@@ -1,5 +1,5 @@
 /**
- * @fileoverview camelCase 기반 Pipeline 입력 타입 정의 
+ * @fileoverview camelCase 기반 Pipeline 입력 타입 정의
  * @description otto-ui에서 전송하는 camelCase JSON을 위한 타입 시스템
  * @module pipeline-input.types
  */
@@ -10,32 +10,32 @@
 export enum CICDBlockType {
   // Pipeline Start
   PIPELINE_START = 'pipeline_start',
-  
+
   // Prebuild
   OS_PACKAGE = 'os_package',
-  NODE_VERSION = 'node_version', 
+  NODE_VERSION = 'node_version',
   ENVIRONMENT_SETUP = 'environment_setup',
-  
+
   // Build
   INSTALL_MODULE_NODE = 'install_module_node',
   BUILD_WEBPACK = 'build_webpack',
   BUILD_VITE = 'build_vite',
   BUILD_CUSTOM = 'build_custom',
-  
+
   // Test
   TEST_JEST = 'test_jest',
-  TEST_MOCHA = 'test_mocha', 
+  TEST_MOCHA = 'test_mocha',
   TEST_VITEST = 'test_vitest',
   TEST_CUSTOM = 'test_custom',
-  
+
   // Notification
   NOTIFICATION_SLACK = 'notification_slack',
   NOTIFICATION_EMAIL = 'notification_email',
-  
+
   // Utility
   CONDITION_BRANCH = 'condition_branch',
   PARALLEL_EXECUTION = 'parallel_execution',
-  CUSTOM_COMMAND = 'custom_command'
+  CUSTOM_COMMAND = 'custom_command',
 }
 
 /**
@@ -43,11 +43,11 @@ export enum CICDBlockType {
  */
 export enum CICDBlockGroup {
   START = 'start',
-  PREBUILD = 'prebuild', 
+  PREBUILD = 'prebuild',
   BUILD = 'build',
   TEST = 'test',
   NOTIFICATION = 'notification',
-  UTILITY = 'utility'
+  UTILITY = 'utility',
 }
 
 /**
