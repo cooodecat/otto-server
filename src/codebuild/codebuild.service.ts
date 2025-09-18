@@ -493,7 +493,7 @@ export class CodeBuildService {
         if (envBlock.environmentVariables) {
           Object.entries(envBlock.environmentVariables).forEach(
             ([key, value]) => {
-              commands.push(`export ${key}="${value}"`);
+              commands.push(`export ${key}="${String(value)}"`);
             },
           );
         }
