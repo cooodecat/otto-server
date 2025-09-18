@@ -5,6 +5,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { CodeBuildModule } from './codebuild/codebuild.module';
+import { CodeDeployModule } from './codedeploy/codedeploy.module';
 import { BuildsModule } from './builds/builds.module';
 import { CloudWatchLogsModule } from './cloudwatch-logs/cloudwatch-logs.module';
 import { GithubIntegrationModule } from './github-integration/github-integration.module';
@@ -39,6 +40,7 @@ import { PipelineModule } from './pipeline/pipeline.module';
     AuthModule,
     BuildsModule,
     CodeBuildModule,
+    CodeDeployModule,
     CloudWatchLogsModule,
     GithubIntegrationModule,
     ProjectsModule,
