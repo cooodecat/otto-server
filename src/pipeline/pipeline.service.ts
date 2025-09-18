@@ -16,13 +16,23 @@ export class PipelineService {
   async createPipeline(
     createPipelineDto: CreatePipelineDto,
   ): Promise<PipelineResponse> {
+    // 프로젝트의 기존 파이프라인 개수를 가져와서 다음 번호 결정
+    const { count } = await this.supabaseService
+      .getClient()
+      .from('pipelines')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', createPipelineDto.projectId);
+
+    const pipelineNumber = (count || 0) + 1;
+    const defaultName = createPipelineDto.name || `Pipeline #${pipelineNumber}`;
+
     // 기존 데이터 업데이트 (upsert)
     const { data, error } = await this.supabaseService
       .getClient()
       .from('pipelines')
       .upsert({
         project_id: createPipelineDto.projectId,
-        name: createPipelineDto.name,
+        name: defaultName,
         data: createPipelineDto.flowData,
         env: null,
       })
@@ -129,9 +139,7 @@ export class PipelineService {
     return {
       id: pipeline.pipeline_id,
       projectId: pipeline.project_id,
-      name:
-        pipeline.name ||
-        `Pipeline ${new Date(pipeline.created_at).toLocaleString()}`, // DB의 name 필드 사용
+      name: pipeline.name || `Pipeline #1`, // DB의 name 필드 사용
       description: 'Pipeline created from dashboard', // 기존 스키마에 description 필드가 없어서 기본값
       flowData: pipeline.data,
       isActive: true, // 기존 스키마에 isActive 필드가 없어서 기본값

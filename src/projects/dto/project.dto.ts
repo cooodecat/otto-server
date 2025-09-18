@@ -40,6 +40,7 @@ export interface CreateProjectWithGithubRequest {
 
 export interface CreateProjectWithGithubResponse {
   project: Project;
+  pipelineId?: string | null;
 }
 
 export interface UpdateProjectRequest {

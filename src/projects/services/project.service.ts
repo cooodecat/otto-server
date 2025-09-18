@@ -244,15 +244,18 @@ export class ProjectService {
         }
 
         // 3-1. 기본 파이프라인 자동 생성
+        let pipelineId: string | null = null;
         try {
-          await this.createDefaultPipeline(
+          pipelineId = await this.createDefaultPipeline(
             typedProject.project_id,
             githubRepoName,
             selectedBranch || 'main',
           );
-          this.logger.log(
-            `Default pipeline created for project: ${typedProject.project_id}`,
-          );
+          if (pipelineId) {
+            this.logger.log(
+              `Default pipeline created for project: ${typedProject.project_id}, pipeline ID: ${pipelineId}`,
+            );
+          }
         } catch (pipelineError) {
           // 파이프라인 생성 실패는 프로젝트 생성을 막지 않음
           this.logger.warn(
@@ -269,6 +272,7 @@ export class ProjectService {
             codebuild_project_arn: codebuildResult.projectArn,
             cloudwatch_log_group: codebuildResult.logGroupName,
           },
+          pipelineId: pipelineId,
         };
       } catch (codebuildError) {
         // 4. CodeBuild 생성 실패 시 상태 업데이트
@@ -292,6 +296,7 @@ export class ProjectService {
             codebuild_status: 'FAILED',
             codebuild_error_message: errorMessage,
           },
+          pipelineId: null,
         };
       }
     } catch (error) {
@@ -862,7 +867,16 @@ artifacts:
     projectId: string,
     repoName: string,
     branch: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
+    // 프로젝트의 파이프라인 개수 확인 (첨 생성이라 #1이 되도록)
+    const { count } = await this.supabaseService
+      .getClient()
+      .from('pipelines')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', projectId);
+
+    const pipelineNumber = (count || 0) + 1;
+    const pipelineName = `Pipeline #${pipelineNumber}`;
     const defaultPipeline = {
       version: '0.2',
       runtime: 'node:18',
@@ -914,6 +928,7 @@ artifacts:
       .from('pipelines')
       .insert({
         project_id: projectId,
+        name: pipelineName,
         data: defaultPipeline,
         env: null,
       })
@@ -935,11 +950,13 @@ artifacts:
         pipelineId: data.pipeline_id,
         projectId: data.project_id,
       });
+      return data.pipeline_id;
     }
 
     this.logger.log(
       `Default pipeline created for project ${projectId} with repo ${repoName} on branch ${branch}`,
     );
+    return null;
   }
 
   /**
