@@ -69,6 +69,66 @@ export class CodeBuildController {
   constructor(private readonly codeBuildService: CodeBuildService) {}
 
   /**
+   * AWS CodeBuild 연결 테스트 (Ping)
+   *
+   * @description
+   * AWS CodeBuild API 연결과 자격 증명을 테스트합니다.
+   * ListProjects API를 호출하여 권한과 연결 상태를 확인합니다.
+   *
+   * @method testCodeBuildConnection
+   * @async
+   * @returns {Promise<{ status: string; message: string; projects?: any }>} 연결 테스트 결과
+   *
+   * @example
+   * ```bash
+   * GET /api/v1/codebuild/test-connection
+   * Authorization: Bearer JWT_TOKEN
+   *
+   * # Success Response
+   * {
+   *   "status": "success",
+   *   "message": "AWS CodeBuild 연결 성공",
+   *   "projects": ["otto-user1-proj1", "otto-user2-proj2"]
+   * }
+   *
+   * # Error Response
+   * {
+   *   "status": "error",
+   *   "message": "UnrecognizedClientException: The security token included in the request is invalid"
+   * }
+   * ```
+   */
+  @Get('test-connection')
+  async testCodeBuildConnection(): Promise<{
+    status: string;
+    message: string;
+    projects?: any;
+  }> {
+    try {
+      this.logger.log('Testing AWS CodeBuild connection...');
+
+      // CodeBuildService에서 테스트 메서드 호출
+      const result = await this.codeBuildService.testConnection();
+
+      this.logger.log('AWS CodeBuild connection test successful');
+      return {
+        status: 'success',
+        message: 'AWS CodeBuild 연결 성공',
+        projects: result,
+      };
+    } catch (error: any) {
+      this.logger.error('AWS CodeBuild connection test failed:', error);
+
+      // 자세한 에러 정보 반환
+      return {
+        status: 'error',
+        message: error.message || 'AWS CodeBuild 연결 실패',
+        projects: undefined,
+      };
+    }
+  }
+
+  /**
    * 빌드 상태를 조회합니다
    *
    * @description

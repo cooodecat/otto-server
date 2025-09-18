@@ -8,6 +8,7 @@ import {
   CreateProjectCommand,
   UpdateProjectCommand,
   DeleteProjectCommand,
+  ListProjectsCommand,
 } from '@aws-sdk/client-codebuild';
 import * as yaml from 'js-yaml';
 import { BuildsService } from '../builds/builds.service';
@@ -229,7 +230,6 @@ export class CodeBuildService {
     const secretAccessKey = this.configService.get<string>(
       'AWS_SECRET_ACCESS_KEY',
     );
-    const sessionToken = this.configService.get<string>('AWS_SESSION_TOKEN');
 
     // AWS 자격 증명 검증
     this.logger.log(`[CodeBuildService] AWS 자격 증명 확인:`, {
@@ -238,10 +238,6 @@ export class CodeBuildService {
       secretAccessKey: secretAccessKey
         ? `${secretAccessKey.substring(0, 10)}...`
         : '누락',
-      sessionToken: sessionToken
-        ? `${sessionToken.substring(0, 10)}...`
-        : '누락',
-      isTemporaryCredentials: accessKeyId?.startsWith('ASIA'),
     });
 
     if (!accessKeyId || !secretAccessKey) {
@@ -250,37 +246,17 @@ export class CodeBuildService {
       );
     }
 
-    // CodeBuild 클라이언트 초기화
-    const credentials: {
-      accessKeyId: string;
-      secretAccessKey: string;
-      sessionToken?: string;
-    } = {
-      accessKeyId,
-      secretAccessKey,
-    };
-
-    // 임시 자격 증명인 경우 SessionToken 추가
-    if (sessionToken) {
-      credentials.sessionToken = sessionToken;
-      this.logger.log(
-        `[CodeBuildService] 임시 자격 증명 사용 - SessionToken 추가됨`,
-      );
-    } else {
-      this.logger.log(
-        `[CodeBuildService] 영구 자격 증명 사용 - SessionToken 없음`,
-      );
-    }
-
     this.logger.log(`[CodeBuildService] CodeBuild 클라이언트 초기화:`, {
       region,
-      hasSessionToken: !!sessionToken,
-      credentialType: sessionToken ? 'Temporary' : 'Permanent',
+      credentialType: 'Permanent',
     });
 
     this.codeBuildClient = new CodeBuildClient({
       region,
-      credentials,
+      credentials: {
+        accessKeyId,
+        secretAccessKey,
+      },
     });
   }
 
@@ -864,6 +840,44 @@ export class CodeBuildService {
       buildSpecYaml,
       undefined, // 환경변수는 블록 내부에서 파싱되므로 별도로 전달하지 않음
     );
+  }
+
+  /**
+   * AWS CodeBuild API 연결 테스트
+   *
+   * @description
+   * ListProjects API를 호출하여 AWS 자격 증명과 연결 상태를 확인합니다.
+   * 가장 간단한 읽기 전용 API를 사용하여 권한을 테스트합니다.
+   *
+   * @returns AWS CodeBuild 프로젝트 목록
+   * @throws AWS API 오류 (UnrecognizedClientException, AccessDeniedException 등)
+   */
+  async testConnection(): Promise<string[]> {
+    try {
+      this.logger.log('[testConnection] AWS CodeBuild 연결 테스트 시작...');
+
+      // ListProjects는 가장 간단한 읽기 권한 테스트
+      const command = new ListProjectsCommand({});
+
+      this.logger.log('[testConnection] ListProjects 명령 실행 중...');
+      const response = await this.codeBuildClient.send(command);
+
+      this.logger.log('[testConnection] AWS CodeBuild 연결 성공!', {
+        projectCount: response.projects?.length || 0,
+        projects: response.projects?.slice(0, 5), // 처음 5개만 로깅
+      });
+
+      return response.projects || [];
+    } catch (error: any) {
+      this.logger.error('[testConnection] AWS CodeBuild 연결 실패:', {
+        errorName: error.name,
+        errorMessage: error.message,
+        errorCode: error.$metadata?.httpStatusCode,
+      });
+
+      // 에러를 그대로 throw하여 컨트롤러에서 처리
+      throw error;
+    }
   }
 
   /**

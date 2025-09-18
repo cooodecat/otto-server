@@ -42,7 +42,6 @@ export class CloudWatchLogsService {
       region: this.configService.get<string>('AWS_REGION') || 'us-east-1',
       accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID'),
       secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY'),
-      sessionToken: this.configService.get<string>('AWS_SESSION_TOKEN'),
     };
 
     this.logger.log(`AWS Config - Region: ${config.region}`);
@@ -52,16 +51,12 @@ export class CloudWatchLogsService {
     this.logger.log(
       `AWS Config - SecretAccessKey: ${config.secretAccessKey ? '***provided***' : 'undefined'}`,
     );
-    this.logger.log(
-      `AWS Config - SessionToken: ${config.sessionToken ? '***provided***' : 'undefined'}`,
-    );
 
     const credentials =
       config.accessKeyId && config.secretAccessKey
         ? {
             accessKeyId: config.accessKeyId,
             secretAccessKey: config.secretAccessKey,
-            sessionToken: config.sessionToken,
           }
         : undefined;
 

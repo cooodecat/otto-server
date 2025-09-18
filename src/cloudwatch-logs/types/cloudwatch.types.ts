@@ -36,5 +36,4 @@ export interface CloudWatchConfig {
   region: string;
   accessKeyId: string | undefined;
   secretAccessKey: string | undefined;
-  sessionToken?: string | undefined;
 }
