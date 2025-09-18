@@ -435,7 +435,7 @@ export class GithubIntegrationService {
           returnUrl: returnUrl || '/projects',
         }),
       ).toString('base64');
-      const installUrl = `https://github.com/apps/codecat-otto-dev/installations/new?state=${state}`;
+      const installUrl = `https://github.com/apps/codecat-otto-prod/installations/new?state=${state}`;
 
       return {
         installUrl,
