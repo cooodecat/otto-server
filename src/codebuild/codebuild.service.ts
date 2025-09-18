@@ -284,21 +284,22 @@ export class CodeBuildService {
     });
   }
 
-
   /**
    * camelCase Pipeline Input을 buildspec.yml로 변환합니다
-   * 
+   *
    * @description
    * otto-ui에서 전송하는 camelCase 형태의 파이프라인 데이터를
    * AWS CodeBuild가 이해할 수 있는 buildspec.yml 형식으로 변환합니다.
-   * 
+   *
    * @param input - camelCase 형태의 파이프라인 입력
    * @returns buildspec.yml YAML 문자열
    */
   convertPipelineInputToBuildSpec(input: SimplePipelineInput): string {
     // 블록에서 version과 runtime 추출
-    const versionAndRuntime = this.extractVersionAndRuntimeFromBlocks(input.blocks);
-    
+    const versionAndRuntime = this.extractVersionAndRuntimeFromBlocks(
+      input.blocks,
+    );
+
     const buildSpec: BuildSpecYaml = {
       version: versionAndRuntime.version || '0.2',
       phases: {},
@@ -339,7 +340,9 @@ export class CodeBuildService {
     );
 
     // 모든 블록에서 환경변수 수집
-    const allEnvironmentVariables = this.collectEnvironmentVariablesFromBlocks(input.blocks);
+    const allEnvironmentVariables = this.collectEnvironmentVariablesFromBlocks(
+      input.blocks,
+    );
 
     // pre_build 단계: PREBUILD 그룹 처리
     if (prebuildBlocks.length > 0) {
@@ -366,7 +369,11 @@ export class CodeBuildService {
     }
 
     // post_build 단계: TEST, NOTIFICATION, UTILITY 그룹 처리
-    const postBuildBlocks = [...testBlocks, ...notificationBlocks, ...utilityBlocks];
+    const postBuildBlocks = [
+      ...testBlocks,
+      ...notificationBlocks,
+      ...utilityBlocks,
+    ];
     if (postBuildBlocks.length > 0) {
       buildSpec.phases.post_build = {
         commands: [],
@@ -395,7 +402,10 @@ export class CodeBuildService {
   /**
    * 블록에서 version과 runtime을 추출합니다
    */
-  private extractVersionAndRuntimeFromBlocks(blocks: AnyPipelineBlock[]): { version?: string; runtime?: string } {
+  private extractVersionAndRuntimeFromBlocks(blocks: AnyPipelineBlock[]): {
+    version?: string;
+    runtime?: string;
+  } {
     let version: string | undefined;
     let runtime: string | undefined;
 
@@ -432,7 +442,9 @@ export class CodeBuildService {
   /**
    * 모든 블록에서 환경변수를 수집합니다
    */
-  private collectEnvironmentVariablesFromBlocks(blocks: AnyPipelineBlock[]): Record<string, string> {
+  private collectEnvironmentVariablesFromBlocks(
+    blocks: AnyPipelineBlock[],
+  ): Record<string, string> {
     const allEnvVars: Record<string, string> = {};
 
     for (const block of blocks) {
@@ -444,7 +456,7 @@ export class CodeBuildService {
         }
       }
 
-      // Custom Command 블록에서 환경변수 추출  
+      // Custom Command 블록에서 환경변수 추출
       if (block.blockType === CICDBlockType.CUSTOM_COMMAND) {
         const customBlock = block as any;
         if (customBlock.environmentVariables) {
@@ -454,7 +466,10 @@ export class CodeBuildService {
 
       // 다른 블록들도 환경변수가 있을 수 있으므로 범용적으로 처리
       const anyBlock = block as any;
-      if (anyBlock.environmentVariables && typeof anyBlock.environmentVariables === 'object') {
+      if (
+        anyBlock.environmentVariables &&
+        typeof anyBlock.environmentVariables === 'object'
+      ) {
         Object.assign(allEnvVars, anyBlock.environmentVariables);
       }
     }
@@ -473,7 +488,7 @@ export class CodeBuildService {
         const packages = osBlock.installPackages?.join(' ') || '';
         switch (osBlock.packageManager) {
           case 'apt':
-            return osBlock.updatePackageList 
+            return osBlock.updatePackageList
               ? [`apt-get update`, `apt-get install -y ${packages}`]
               : [`apt-get install -y ${packages}`];
           case 'yum':
@@ -500,9 +515,11 @@ export class CodeBuildService {
         const envBlock = block as any;
         const commands: string[] = [];
         if (envBlock.environmentVariables) {
-          Object.entries(envBlock.environmentVariables).forEach(([key, value]) => {
-            commands.push(`export ${key}="${value}"`);
-          });
+          Object.entries(envBlock.environmentVariables).forEach(
+            ([key, value]) => {
+              commands.push(`export ${key}="${value}"`);
+            },
+          );
         }
         return commands;
       }
@@ -512,17 +529,19 @@ export class CodeBuildService {
         const installBlock = block as any;
         const manager = installBlock.packageManager || 'npm';
         const commands: string[] = [];
-        
+
         if (installBlock.cleanInstall) {
           commands.push(`${manager} ci`);
         } else {
           commands.push(`${manager} install`);
         }
-        
+
         if (installBlock.installPackages?.length > 0) {
-          commands.push(`${manager} install ${installBlock.installPackages.join(' ')}`);
+          commands.push(
+            `${manager} install ${installBlock.installPackages.join(' ')}`,
+          );
         }
-        
+
         return commands;
       }
 
@@ -531,7 +550,9 @@ export class CodeBuildService {
         const webpackBlock = block as any;
         const commands: string[] = [];
         if (webpackBlock.configFile) {
-          commands.push(`npx webpack --config ${webpackBlock.configFile} --mode ${webpackBlock.mode}`);
+          commands.push(
+            `npx webpack --config ${webpackBlock.configFile} --mode ${webpackBlock.mode}`,
+          );
         } else {
           commands.push(`npx webpack --mode ${webpackBlock.mode}`);
         }
@@ -559,7 +580,7 @@ export class CodeBuildService {
         const jestBlock = block as any;
         const commands: string[] = [];
         let jestCmd = 'npx jest';
-        
+
         if (jestBlock.configFile) {
           jestCmd += ` --config ${jestBlock.configFile}`;
         }
@@ -569,7 +590,7 @@ export class CodeBuildService {
         if (jestBlock.testPattern) {
           jestCmd += ` ${jestBlock.testPattern}`;
         }
-        
+
         commands.push(jestCmd);
         return commands;
       }
@@ -578,7 +599,7 @@ export class CodeBuildService {
       case CICDBlockType.TEST_MOCHA: {
         const mochaBlock = block as any;
         let mochaCmd = 'npx mocha';
-        
+
         if (mochaBlock.configFile) {
           mochaCmd += ` --config ${mochaBlock.configFile}`;
         }
@@ -588,7 +609,7 @@ export class CodeBuildService {
         if (mochaBlock.testFiles?.length > 0) {
           mochaCmd += ` ${mochaBlock.testFiles.join(' ')}`;
         }
-        
+
         return [mochaCmd];
       }
 
@@ -596,14 +617,14 @@ export class CodeBuildService {
       case CICDBlockType.TEST_VITEST: {
         const vitestBlock = block as any;
         let vitestCmd = 'npx vitest run';
-        
+
         if (vitestBlock.coverage) {
           vitestCmd += ' --coverage';
         }
         if (vitestBlock.configFile) {
           vitestCmd += ` --config ${vitestBlock.configFile}`;
         }
-        
+
         return [vitestCmd];
       }
 
@@ -808,12 +829,12 @@ export class CodeBuildService {
 
   /**
    * camelCase Pipeline Input으로 빌드를 시작합니다
-   * 
+   *
    * @description
    * otto-ui에서 전송하는 camelCase 형태의 파이프라인 데이터를 받아서
    * AWS CodeBuild buildspec.yml로 변환한 후 빌드를 시작합니다.
    * 환경변수는 블록 내부에서 파싱되므로 별도로 전달하지 않습니다.
-   * 
+   *
    * @param userId - 사용자 ID
    * @param projectId - 프로젝트 ID
    * @param input - camelCase 형태의 파이프라인 입력
@@ -1187,5 +1208,4 @@ artifacts:
     if (!startTime || !endTime) return undefined;
     return Math.round((endTime.getTime() - startTime.getTime()) / 1000);
   }
-
 }

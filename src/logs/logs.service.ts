@@ -1500,7 +1500,46 @@ export class LogsService implements OnModuleDestroy {
       offset?: number;
     } = {},
   ): Promise<{
-    builds: Array<any>;
+    builds: Array<{
+      id: string;
+      buildId: string;
+      buildNumber?: number;
+      status: string;
+      buildExecutionStatus?: string;
+      trigger: {
+        type: string;
+        author?: string;
+        timestamp?: string;
+      };
+      repository: {
+        branch?: string;
+        commitHash?: string;
+        commitMessage?: string;
+      };
+      phases: Array<{
+        name: string;
+        status: string;
+        startTime?: string;
+        endTime?: string;
+        duration?: string;
+      }>;
+      metrics: {
+        totalLines: number;
+        errorCount: number;
+        warningCount: number;
+        infoCount: number;
+        fileSize: number;
+      };
+      isArchived: boolean;
+      archivedAt?: string;
+      startTime?: string;
+      endTime?: string;
+      duration?: string;
+      projectId?: string;
+      userId?: string;
+      logsUrl?: string;
+      errorMessage?: string;
+    }>;
     total: number;
   }> {
     try {
@@ -1508,7 +1547,11 @@ export class LogsService implements OnModuleDestroy {
       const offset = options.offset || 0;
 
       // 프로젝트의 빌드 히스토리 조회
-      const { data: buildHistories, error: bhError, count } = await this.supabaseService
+      const {
+        data: buildHistories,
+        error: bhError,
+        count,
+      } = await this.supabaseService
         .getClient()
         .from('build_histories')
         .select('*, build_execution_phases(*)', { count: 'exact' })
@@ -1517,7 +1560,10 @@ export class LogsService implements OnModuleDestroy {
         .range(offset, offset + limit - 1);
 
       if (bhError) {
-        this.logger.error(`Failed to get build histories for project ${projectId}:`, bhError);
+        this.logger.error(
+          `Failed to get build histories for project ${projectId}:`,
+          bhError,
+        );
         return { builds: [], total: 0 };
       }
 
@@ -1526,8 +1572,31 @@ export class LogsService implements OnModuleDestroy {
       }
 
       // 각 빌드의 메타데이터를 가져와서 매핑
+      interface BuildHistory {
+        id: string;
+        aws_build_id?: string;
+        build_number?: number;
+        build_execution_status?: string;
+        environment_variables?: Record<string, string>;
+        user_id?: string;
+        created_at?: string;
+        start_time?: string;
+        end_time?: string;
+        duration_seconds?: number;
+        project_id?: string;
+        cloudwatch_logs_arn?: string;
+        error_output?: string;
+        build_execution_phases?: Array<{
+          phase_type: string;
+          phase_status: string;
+          phase_start_time: string | null;
+          phase_end_time: string | null;
+          phase_duration_seconds: number | null;
+        }>;
+      }
+
       const builds = await Promise.all(
-        buildHistories.map(async (build) => {
+        (buildHistories as BuildHistory[]).map(async (build) => {
           // log_archives 조회
           const { data: archive } = await this.supabaseService
             .getClient()
@@ -1539,7 +1608,7 @@ export class LogsService implements OnModuleDestroy {
           // 빌드 상태 매핑 (DB는 소문자로 저장)
           let status = 'UNKNOWN';
           const execStatus = build.build_execution_status?.toUpperCase();
-          
+
           if (execStatus === 'SUCCEEDED') status = 'SUCCESS';
           else if (execStatus === 'FAILED') status = 'FAILED';
           else if (execStatus === 'STOPPED') status = 'STOPPED';
@@ -1566,11 +1635,21 @@ export class LogsService implements OnModuleDestroy {
           };
 
           // 단계별 정보
-          const phases = (build.build_execution_phases || []).map((phase: any) => ({
+          interface BuildPhase {
+            phase_type: string;
+            phase_status: string;
+            phase_start_time: string | null;
+            phase_end_time: string | null;
+            phase_duration_seconds: number | null;
+          }
+
+          const phases = (
+            (build.build_execution_phases as BuildPhase[]) || []
+          ).map((phase) => ({
             name: phase.phase_type,
             status: phase.phase_status,
-            startTime: phase.phase_start_time,
-            endTime: phase.phase_end_time,
+            startTime: phase.phase_start_time || undefined,
+            endTime: phase.phase_end_time || undefined,
             duration: phase.phase_duration_seconds
               ? `${phase.phase_duration_seconds}s`
               : undefined,

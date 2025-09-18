@@ -46,9 +46,7 @@ export class PipelineService {
     return this.mapToResponse(data);
   }
 
-  async getPipelinesByProject(
-    getPipelinesDto: GetPipelinesDto,
-  ): Promise<any> {
+  async getPipelinesByProject(getPipelinesDto: GetPipelinesDto): Promise<any> {
     const { data, error } = await this.supabaseService
       .getClient()
       .from('pipelines')
