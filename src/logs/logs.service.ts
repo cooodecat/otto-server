@@ -1485,6 +1485,152 @@ export class LogsService implements OnModuleDestroy {
   }
 
   /**
+   * 프로젝트 ID로 빌드 히스토리와 메타데이터 조회
+   *
+   * 프로젝트의 모든 빌드 히스토리와 각 빌드의 메타데이터를 조회합니다.
+   *
+   * @param projectId - 프로젝트 ID
+   * @param options - 페이지네이션 옵션
+   * @returns 빌드 히스토리와 메타데이터 목록
+   */
+  async getProjectBuildHistories(
+    projectId: string,
+    options: {
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<{
+    builds: Array<any>;
+    total: number;
+  }> {
+    try {
+      const limit = options.limit || 20;
+      const offset = options.offset || 0;
+
+      // 프로젝트의 빌드 히스토리 조회
+      const { data: buildHistories, error: bhError, count } = await this.supabaseService
+        .getClient()
+        .from('build_histories')
+        .select('*, build_execution_phases(*)', { count: 'exact' })
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (bhError) {
+        this.logger.error(`Failed to get build histories for project ${projectId}:`, bhError);
+        return { builds: [], total: 0 };
+      }
+
+      if (!buildHistories || buildHistories.length === 0) {
+        return { builds: [], total: count || 0 };
+      }
+
+      // 각 빌드의 메타데이터를 가져와서 매핑
+      const builds = await Promise.all(
+        buildHistories.map(async (build) => {
+          // log_archives 조회
+          const { data: archive } = await this.supabaseService
+            .getClient()
+            .from('log_archives')
+            .select('*')
+            .eq('build_history_id', build.id)
+            .single();
+
+          // 빌드 상태 매핑 (DB는 소문자로 저장)
+          let status = 'UNKNOWN';
+          const execStatus = build.build_execution_status?.toUpperCase();
+          
+          if (execStatus === 'SUCCEEDED') status = 'SUCCESS';
+          else if (execStatus === 'FAILED') status = 'FAILED';
+          else if (execStatus === 'STOPPED') status = 'STOPPED';
+          else if (execStatus === 'IN_PROGRESS') status = 'RUNNING';
+          else if (execStatus === 'PENDING') status = 'PENDING';
+          else if (execStatus === 'TIMED_OUT') status = 'TIMED_OUT';
+          else if (execStatus) status = execStatus;
+
+          // 환경변수에서 트리거 정보 추출
+          const envVars = build.environment_variables;
+          let triggerType = 'Manual';
+          let triggerAuthor = build.user_id;
+
+          if (envVars?.GITHUB_EVENT_NAME === 'push') {
+            triggerType = 'GitHub Push';
+            triggerAuthor = envVars.GITHUB_ACTOR || triggerAuthor;
+          }
+
+          // 리포지토리 정보
+          const repository = {
+            branch: envVars?.GITHUB_REF_NAME || envVars?.BRANCH_NAME,
+            commitHash: envVars?.GITHUB_SHA || envVars?.COMMIT_ID,
+            commitMessage: envVars?.COMMIT_MESSAGE,
+          };
+
+          // 단계별 정보
+          const phases = (build.build_execution_phases || []).map((phase: any) => ({
+            name: phase.phase_type,
+            status: phase.phase_status,
+            startTime: phase.phase_start_time,
+            endTime: phase.phase_end_time,
+            duration: phase.phase_duration_seconds
+              ? `${phase.phase_duration_seconds}s`
+              : undefined,
+          }));
+
+          // 메트릭 정보
+          const metrics = {
+            totalLines: archive?.total_log_lines || 0,
+            errorCount: archive?.error_count || 0,
+            warningCount: archive?.warning_count || 0,
+            infoCount: archive?.info_count || 0,
+            fileSize: archive?.file_size_bytes || 0,
+          };
+
+          // 기간 계산
+          let duration: string | undefined;
+          if (build.duration_seconds) {
+            const minutes = Math.floor(build.duration_seconds / 60);
+            const seconds = build.duration_seconds % 60;
+            duration = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+          }
+
+          return {
+            id: build.id,
+            buildId: build.aws_build_id || build.id,
+            buildNumber: build.build_number,
+            status,
+            buildExecutionStatus: build.build_execution_status, // 원본 상태도 포함 (디버깅용)
+            trigger: {
+              type: triggerType,
+              author: triggerAuthor,
+              timestamp: build.created_at,
+            },
+            repository,
+            phases,
+            metrics,
+            isArchived: !!archive,
+            archivedAt: archive?.created_at,
+            startTime: build.start_time,
+            endTime: build.end_time,
+            duration,
+            projectId: build.project_id,
+            userId: build.user_id,
+            logsUrl: build.cloudwatch_logs_arn,
+            errorMessage: build.error_output,
+          };
+        }),
+      );
+
+      return {
+        builds,
+        total: count || 0,
+      };
+    } catch (error) {
+      this.logger.error(`Error getting project build histories:`, error);
+      return { builds: [], total: 0 };
+    }
+  }
+
+  /**
    * 빌드 분석 및 통계 조회
    *
    * 지정된 기간 동안의 빌드 통계, 트렌드, 에러 패턴, 성능 메트릭 등을 분석합니다.

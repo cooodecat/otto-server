@@ -9,6 +9,8 @@ import {
   MessageEvent,
   UsePipes,
   ValidationPipe,
+  DefaultValuePipe,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
 import { map, filter } from 'rxjs/operators';
@@ -337,6 +339,34 @@ export class LogsController {
       userId: query.userId,
       timeRange: query.timeRange,
       groupBy: query.groupBy,
+    });
+  }
+
+  /**
+   * 프로젝트 ID로 빌드 히스토리와 메타데이터 조회
+   *
+   * 프로젝트의 모든 빌드 히스토리와 각 빌드의 메타데이터를 조회합니다.
+   *
+   * @param projectId - 프로젝트 ID
+   * @param limit - 조회할 최대 빌드 개수 (기본값: 20)
+   * @param offset - 페이지네이션 오프셋 (기본값: 0)
+   * @returns 빌드 히스토리와 메타데이터 목록
+   *
+   * @example
+   * GET /logs/projects/ea32d77b-faae-499b-ab2d-f31e9d3bb1eb/builds
+   */
+  @Get('projects/:projectId/builds')
+  async getProjectBuildHistories(
+    @Param('projectId') projectId: string,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+  ): Promise<{
+    builds: Array<any>;
+    total: number;
+  }> {
+    return this.logsService.getProjectBuildHistories(projectId, {
+      limit: Math.min(limit, 100),
+      offset,
     });
   }
 
