@@ -2,7 +2,7 @@ import {
   Controller,
   Get,
   Post,
-  Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -35,7 +35,7 @@ export class PipelineController {
   async getPipelinesByProject(
     @Param('projectId') projectId: string,
     @Query('activeOnly') activeOnly?: string,
-  ): Promise<PipelinesListResponse> {
+  ): Promise<any> {
     const getPipelinesDto: GetPipelinesDto = {
       projectId,
       activeOnly: activeOnly === 'true',
@@ -48,7 +48,7 @@ export class PipelineController {
     return this.pipelineService.getPipelineById(id);
   }
 
-  @Put(':id')
+  @Patch(':id')
   async updatePipeline(
     @Param('id') id: string,
     @Body() updatePipelineDto: UpdatePipelineDto,
