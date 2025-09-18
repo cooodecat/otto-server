@@ -48,7 +48,7 @@ export class PipelineService {
 
   async getPipelinesByProject(
     getPipelinesDto: GetPipelinesDto,
-  ): Promise<PipelinesListResponse> {
+  ): Promise<any> {
     const { data, error } = await this.supabaseService
       .getClient()
       .from('pipelines')
@@ -60,10 +60,9 @@ export class PipelineService {
       throw new Error(`Failed to fetch pipelines: ${error?.message}`);
     }
 
-    const pipelines = data as PipelineDB[];
     return {
-      pipelines: pipelines.map((pipeline) => this.mapToResponse(pipeline)),
-      total: pipelines.length,
+      pipelines: data,
+      total: data.length,
     };
   }
 
@@ -94,10 +93,6 @@ export class PipelineService {
 
     if (updatePipelineDto.flowData !== undefined) {
       updateData.data = updatePipelineDto.flowData;
-    }
-
-    if (updatePipelineDto.env !== undefined) {
-      updateData.env = updatePipelineDto.env;
     }
 
     const { data, error } = await this.supabaseService
