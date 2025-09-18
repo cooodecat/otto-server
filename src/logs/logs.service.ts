@@ -94,7 +94,6 @@ function normalizeLogEvent(event: LogEvent): NormalizedLogEvent {
   }
 
   // Level 추론
-  const lower = msg.toLowerCase();
   let level: NormalizedLogEvent['level'] = 'INFO';
   if (/(error|failed)/i.test(msg)) level = 'ERROR';
   else if (/(warn|warning)/i.test(msg)) level = 'WARN';

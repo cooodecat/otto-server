@@ -475,7 +475,12 @@ export class BuildsService {
         throw error;
       }
 
-      const builds = data || [];
+      interface BuildStatRecord {
+        build_execution_status?: string;
+        duration_seconds?: number;
+      }
+
+      const builds = (data || []) as BuildStatRecord[];
       const totalBuilds = builds.length;
       const succeededBuilds = builds.filter(
         (b) => b.build_execution_status === 'succeeded',
