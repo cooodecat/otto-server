@@ -493,7 +493,8 @@ export class BuildsService {
         (b) =>
           (b.build_execution_status === 'succeeded' ||
             b.build_execution_status === 'failed') &&
-          b.duration_seconds,
+          b.duration_seconds !== null &&
+          b.duration_seconds !== undefined,
       );
       const averageDurationSeconds =
         completedBuildsWithDuration.length > 0
